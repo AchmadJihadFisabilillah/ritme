@@ -74,29 +74,23 @@ async function transcribe(request, env) {
       ] }],
     });
 
-    let result = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
-      signal: AbortSignal.timeout(25000),
-      body: requestBody,
-    });
+    const transcribeModels = [
+      'gemini-3.5-transcribe',
+      'gemini-flash-lite-latest',
+      'gemini-3.8-flash',
+    ];
 
-    if (!result.ok && result.status !== 429) {
-      result = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
-        signal: AbortSignal.timeout(25000),
-        body: requestBody,
-      });
-    }
-
-    if (!result.ok && result.status !== 429) {
-      result = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
-        signal: AbortSignal.timeout(25000),
-        body: requestBody,
-      });
+    let result = null;
+    for (const model of transcribeModels) {
+      try {
+        result = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
+          signal: AbortSignal.timeout(12000),
+          body: requestBody,
+        });
+        if (result.ok || result.status === 429) break;
+      } catch {}
     }
 
     if (result.status === 429) return json({ error: 'Kuota Gemini sedang terbatas. Coba lagi nanti.' }, 429);
@@ -179,29 +173,23 @@ async function chat(request, env) {
       }))
     });
 
-    let result = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
-      signal: AbortSignal.timeout(25000),
-      body: payloadStr,
-    });
+    const modelsToTry = [
+      'gemini-flash-lite-latest',
+      'gemini-3.5-flash',
+      'gemini-3.8-flash',
+    ];
 
-    if (!result.ok && result.status !== 429) {
-      result = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
-        signal: AbortSignal.timeout(25000),
-        body: payloadStr,
-      });
-    }
-
-    if (!result.ok && result.status !== 429) {
-      result = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
-        signal: AbortSignal.timeout(25000),
-        body: payloadStr,
-      });
+    let result = null;
+    for (const model of modelsToTry) {
+      try {
+        result = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
+          signal: AbortSignal.timeout(12000),
+          body: payloadStr,
+        });
+        if (result.ok || result.status === 429) break;
+      } catch {}
     }
 
     if (result.status === 429) return json({ error: 'Kuota Gemini sedang terbatas.' }, 429);

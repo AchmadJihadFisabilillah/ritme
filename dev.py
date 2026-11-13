@@ -80,7 +80,7 @@ class RitmeHandler(SimpleHTTPRequestHandler):
             self.send_json({'error': 'Format pesan tidak sesuai.'}, 400)
             return
 
-        url = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key={API_KEY}'
+        url = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key={API_KEY}'
         payload = {
             'systemInstruction': {
                 'parts': [{'text': 'Kamu adalah Ritme, asisten perencana pribadi berbasis AI yang ramah, ringkas, dan solutif. Balas setiap pesan pengguna secara langsung dan akrab dalam bahasa Indonesia layaknya percakapan chat. Jika pengguna menyebutkan rencana jadwal atau kegiatan, responlah dengan antusias dan sebutkan rincian kegiatan beserta waktunya.'}]
@@ -113,7 +113,7 @@ class RitmeHandler(SimpleHTTPRequestHandler):
             return
 
         b64_audio = base64.b64encode(audio_bytes).decode('utf-8')
-        url = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key={API_KEY}'
+        url = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-transcribe:generateContent?key={API_KEY}'
         payload = {
             'contents': [{
                 'parts': [
