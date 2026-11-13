@@ -24,6 +24,7 @@ const shapes = {
   signal: '<path d="M4 20v-3m5 3v-7m5 7V9m5 11V4"/>',
   flame: '<path d="M12 22a7 7 0 0 0 7-7c0-4-3-7-5-9 0 4-2 4-2 4-2-2-2-5-1-8-5 4-6 8-6 13a7 7 0 0 0 7 7Z"/>',
   pencil: '<path d="m15 6 3 3M4 20l4-1 12-12a2.1 2.1 0 0 0-3-3L5 16z"/>',
+  trash: '<path d="M3 6h18m-2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m-6 5v6m4-6v6"/>',
   close: '<path d="m6 6 12 12M18 6 6 18"/>',
 };
 const brandArt = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M3 13h4v7H3zm7-5h4v12h-4zm7-5h4v17h-4z"/></svg>';
@@ -250,13 +251,17 @@ function streak(item) {
   return count;
 }
 
-function agendaEntry(item, editable = false) {
-  const type = agendaTypes[item.type];
+function agendaEntry(item) {
+  const type = agendaTypes[item.type] || agendaTypes.pribadi;
   return `<div class="entry ${item.done ? 'is-done' : ''}">
     <span class="time">${safe(item.time || '–')}</span>${symbol(type)}
     <div class="entry-main"><span class="entry-name">${safe(item.title)}</span></div>
     <span class="tag category ${type.color}">${type.label}</span>
-    ${checkButton('toggle-agenda', item, item.done)}${editable ? editButton('edit-agenda', item) : ''}
+    ${checkButton('toggle-agenda', item, item.done)}
+    <div class="entry-actions">
+      <button type="button" class="action-btn edit" data-action="edit-agenda" data-id="${safe(item.id)}" title="Ubah ${safe(item.title)}">${icon('pencil')}<span>Ubah</span></button>
+      <button type="button" class="action-btn delete" data-action="delete-item" data-id="agenda|${safe(item.id)}" title="Hapus ${safe(item.title)}">${icon('trash')}<span>Hapus</span></button>
+    </div>
   </div>`;
 }
 
@@ -264,9 +269,13 @@ function habitEntry(item) {
   const done = item.days.includes(today);
   const count = streak(item);
   return `<div class="entry habit ${done ? 'is-done' : ''}">
-    ${symbol(habitTypes[item.type])}
+    ${symbol(habitTypes[item.type] || habitTypes.kesehatan)}
     <div class="entry-main"><span class="entry-name">${safe(item.title)}</span><small>${count ? `${count} hari berturut-turut` : 'Belum ada rangkaian hari'}${done ? ' · Selesai hari ini' : ''}</small></div>
     ${checkButton('toggle-habit', item, done, today)}
+    <div class="entry-actions">
+      <button type="button" class="action-btn edit" data-action="edit-habit" data-id="${safe(item.id)}" title="Ubah ${safe(item.title)}">${icon('pencil')}<span>Ubah</span></button>
+      <button type="button" class="action-btn delete" data-action="delete-item" data-id="habits|${safe(item.id)}" title="Hapus ${safe(item.title)}">${icon('trash')}<span>Hapus</span></button>
+    </div>
   </div>`;
 }
 
@@ -277,12 +286,16 @@ function billDescription(item) {
   return `Jatuh tempo ${shortDate.format(asDate(item.date))}`;
 }
 
-function billEntry(item, editable = false) {
-  return `<div class="entry">
-    ${symbol(billTypes[item.type])}
+function billEntry(item) {
+  return `<div class="entry ${item.paid ? 'is-paid' : ''}">
+    ${symbol(billTypes[item.type] || billTypes.internet)}
     <div class="entry-main"><span class="entry-name">${safe(item.title)}</span><small>${billDescription(item)}</small></div>
     <span class="amount">${rupiah.format(item.amount)}</span>
-    ${editable ? checkButton('toggle-bill', { ...item, title: `Status lunas ${item.title}` }, item.paid) + editButton('edit-bill', item) : ''}
+    ${checkButton('toggle-bill', { ...item, title: `Status lunas ${item.title}` }, item.paid)}
+    <div class="entry-actions">
+      <button type="button" class="action-btn edit" data-action="edit-bill" data-id="${safe(item.id)}" title="Ubah ${safe(item.title)}">${icon('pencil')}<span>Ubah</span></button>
+      <button type="button" class="action-btn delete" data-action="delete-item" data-id="bills|${safe(item.id)}" title="Hapus ${safe(item.title)}">${icon('trash')}<span>Hapus</span></button>
+    </div>
   </div>`;
 }
 
@@ -389,7 +402,7 @@ function habitsPage() {
   const headings = dates.map((date) => `<th scope="col"${date === today ? ' class="active-day"' : ''}>${weekday.format(asDate(date))}<br>${shortDate.format(asDate(date))}</th>`).join('');
   const rows = state.habits.map((item) => {
     const cells = dates.map((date) => `<td>${checkButton('toggle-habit', item, item.days.includes(date), date)}</td>`).join('');
-    return `<tr><th scope="row"><span class="entry-name">${safe(item.title)}</span></th>${cells}<td><span class="tag gold">${icon('flame')} ${streak(item)} hari</span></td><td>${editButton('edit-habit', item)}</td></tr>`;
+    return `<tr><th scope="row"><span class="entry-name">${safe(item.title)}</span></th>${cells}<td><span class="tag gold">${icon('flame')} ${streak(item)} hari</span></td><td><div class="entry-actions"><button type="button" class="action-btn edit" data-action="edit-habit" data-id="${safe(item.id)}" title="Ubah ${safe(item.title)}">${icon('pencil')}<span>Ubah</span></button><button type="button" class="action-btn delete" data-action="delete-item" data-id="habits|${safe(item.id)}" title="Hapus ${safe(item.title)}">${icon('trash')}<span>Hapus</span></button></div></td></tr>`;
   }).join('');
   const forwardDisabled = habitDate >= today ? ' disabled' : '';
   return `
@@ -403,7 +416,7 @@ function habitsPage() {
           ${button('7 hari terakhir', 'habit-today', '', { focus: 'habit-today' })}
         </div>
       </div>
-      ${rows ? `<div class="scroll-area" tabindex="0" aria-label="Tabel kebiasaan"><table class="habit-calendar"><thead><tr><th scope="col">Kebiasaan</th>${headings}<th scope="col">Beruntun</th><th scope="col" aria-label="Ubah kebiasaan"></th></tr></thead><tbody>${rows}</tbody></table></div>` : empty('Belum ada kebiasaan yang dilacak.') }
+      ${rows ? `<div class="scroll-area" tabindex="0" aria-label="Tabel kebiasaan"><table class="habit-calendar"><thead><tr><th scope="col">Kebiasaan</th>${headings}<th scope="col">Beruntun</th><th scope="col">Aksi</th></tr></thead><tbody>${rows}</tbody></table></div>` : empty('Belum ada kebiasaan yang dilacak.') }
     </section>`;
 }
 
@@ -519,8 +532,318 @@ async function toWav(blob) {
   return { buffer: bytes.buffer, isSilent: maxAmp < 0.002 };
 }
 
+function executeAgentActions(actions) {
+  if (!Array.isArray(actions) || !actions.length) return [];
+  const executed = [];
+
+  for (const action of actions) {
+    if (!action || typeof action !== 'object') continue;
+    const type = (action.type || action.kind || '').toLowerCase();
+    const id = action.id || action.data?.id;
+    const title = action.title || action.data?.title || '';
+    const date = action.date || action.data?.date;
+    const time = action.time || action.data?.time;
+    const amount = Number(action.amount || action.data?.amount);
+    const category = action.category || action.type_category || action.data?.category || action.data?.type;
+    const route = action.route || action.target || action.data?.route || action.data?.page;
+
+    // 1. TAMBAH JADWAL
+    if (type.includes('add') && (type.includes('agenda') || type.includes('schedule') || type.includes('jadwal'))) {
+      const entry = {
+        id: id || crypto.randomUUID(),
+        title: title || 'Kegiatan Baru',
+        date: date || today,
+        time: time || '',
+        type: (category && Object.hasOwn(agendaTypes, category)) ? category : 'pribadi',
+        done: false,
+      };
+      state.agenda.push(entry);
+      agendaDate = entry.date;
+      executed.push({ type: 'add', label: `Jadwal ditambahkan: ${entry.title} (${entry.date}${entry.time ? ' ' + entry.time : ''})` });
+    }
+
+    // 2. HAPUS JADWAL
+    else if (type.includes('delete') && (type.includes('agenda') || type.includes('schedule') || type.includes('jadwal'))) {
+      const prevLen = state.agenda.length;
+      if (id) {
+        state.agenda = state.agenda.filter((a) => a.id !== id);
+      } else if (title) {
+        const query = title.toLowerCase();
+        state.agenda = state.agenda.filter((a) => !a.title.toLowerCase().includes(query));
+      } else if (type.includes('all') || title === 'all') {
+        state.agenda = state.agenda.filter((a) => a.date !== today);
+      }
+      if (state.agenda.length < prevLen) {
+        executed.push({ type: 'delete', label: `Jadwal dihapus: ${title || 'Item'}` });
+      }
+    }
+
+    // 3. UBAH JADWAL
+    else if (type.includes('update') && (type.includes('agenda') || type.includes('schedule') || type.includes('jadwal'))) {
+      const item = state.agenda.find((a) => (id && a.id === id) || (title && a.title.toLowerCase().includes(title.toLowerCase())));
+      if (item) {
+        if (action.newTitle || action.data?.newTitle) item.title = action.newTitle || action.data?.newTitle;
+        if (date) item.date = date;
+        if (time !== undefined) item.time = time;
+        if (category && Object.hasOwn(agendaTypes, category)) item.type = category;
+        executed.push({ type: 'update', label: `Jadwal diperbarui: ${item.title}` });
+      }
+    }
+
+    // 4. CENTANG / TOGGLE JADWAL
+    else if (type.includes('toggle') && (type.includes('agenda') || type.includes('schedule') || type.includes('jadwal'))) {
+      const item = state.agenda.find((a) => (id && a.id === id) || (title && a.title.toLowerCase().includes(title.toLowerCase())));
+      if (item) {
+        item.done = action.done !== undefined ? Boolean(action.done) : !item.done;
+        executed.push({ type: 'toggle', label: `Jadwal "${item.title}" ditandai ${item.done ? 'selesai' : 'belum selesai'}` });
+      }
+    }
+
+    // 5. TAMBAH KEBIASAAN
+    else if (type.includes('add') && (type.includes('habit') || type.includes('kebiasaan'))) {
+      const entry = {
+        id: id || crypto.randomUUID(),
+        title: title || 'Kebiasaan Baru',
+        type: (category && Object.hasOwn(habitTypes, category)) ? category : 'kesehatan',
+        days: [],
+      };
+      state.habits.push(entry);
+      executed.push({ type: 'add', label: `Kebiasaan ditambahkan: ${entry.title}` });
+    }
+
+    // 6. HAPUS KEBIASAAN
+    else if (type.includes('delete') && (type.includes('habit') || type.includes('kebiasaan'))) {
+      const prevLen = state.habits.length;
+      if (id) {
+        state.habits = state.habits.filter((h) => h.id !== id);
+      } else if (title) {
+        const query = title.toLowerCase();
+        state.habits = state.habits.filter((h) => !h.title.toLowerCase().includes(query));
+      }
+      if (state.habits.length < prevLen) {
+        executed.push({ type: 'delete', label: `Kebiasaan dihapus: ${title || 'Item'}` });
+      }
+    }
+
+    // 7. CENTANG KEBIASAAN
+    else if (type.includes('toggle') && (type.includes('habit') || type.includes('kebiasaan'))) {
+      const item = state.habits.find((h) => (id && h.id === id) || (title && h.title.toLowerCase().includes(title.toLowerCase())));
+      if (item) {
+        const d = date || today;
+        if (item.days.includes(d)) {
+          item.days = item.days.filter((x) => x !== d);
+        } else {
+          item.days.push(d);
+        }
+        executed.push({ type: 'toggle', label: `Kebiasaan "${item.title}" dicentang untuk ${d}` });
+      }
+    }
+
+    // 8. TAMBAH TAGIHAN
+    else if (type.includes('add') && (type.includes('bill') || type.includes('tagihan'))) {
+      const entry = {
+        id: id || crypto.randomUUID(),
+        title: title || 'Tagihan Baru',
+        amount: Number.isFinite(amount) && amount > 0 ? amount : 50000,
+        date: date || today,
+        type: (category && Object.hasOwn(billTypes, category)) ? category : 'internet',
+        paid: false,
+      };
+      state.bills.push(entry);
+      executed.push({ type: 'add', label: `Tagihan ditambahkan: ${entry.title} (${rupiah.format(entry.amount)})` });
+    }
+
+    // 9. HAPUS TAGIHAN
+    else if (type.includes('delete') && (type.includes('bill') || type.includes('tagihan'))) {
+      const prevLen = state.bills.length;
+      if (id) {
+        state.bills = state.bills.filter((b) => b.id !== id);
+      } else if (title) {
+        const query = title.toLowerCase();
+        state.bills = state.bills.filter((b) => !b.title.toLowerCase().includes(query));
+      }
+      if (state.bills.length < prevLen) {
+        executed.push({ type: 'delete', label: `Tagihan dihapus: ${title || 'Item'}` });
+      }
+    }
+
+    // 10. BAYAR / TOGGLE TAGIHAN
+    else if (type.includes('toggle') && (type.includes('bill') || type.includes('tagihan'))) {
+      const item = state.bills.find((b) => (id && b.id === id) || (title && b.title.toLowerCase().includes(title.toLowerCase())));
+      if (item) {
+        item.paid = action.paid !== undefined ? Boolean(action.paid) : !item.paid;
+        executed.push({ type: 'toggle', label: `Tagihan "${item.title}" ditandai ${item.paid ? 'lunas' : 'belum bayar'}` });
+      }
+    }
+
+    // 11. NAVIGASI
+    else if (type.includes('nav') || route) {
+      let r = (route || '').toLowerCase();
+      if (r.includes('jadwal') || r.includes('schedule')) r = 'jadwal';
+      else if (r.includes('habit') || r.includes('kebiasaan')) r = 'kebiasaan';
+      else if (r.includes('bill') || r.includes('tagihan') || r.includes('ppob')) r = 'tagihan';
+      else if (r.includes('home') || r.includes('ringkasan') || r.includes('dash')) r = 'ringkasan';
+      if (Object.hasOwn(routes, r)) {
+        location.hash = '#' + r;
+        executed.push({ type: 'navigate', label: `Beralih ke halaman ${routes[r].label}` });
+      }
+    }
+
+    // 12. HAPUS DATA CONTOH
+    else if (type.includes('clear_sample') || type.includes('clear_example')) {
+      for (const key of ['agenda', 'habits', 'bills']) {
+        state[key] = state[key].filter((e) => !e.sample);
+      }
+      executed.push({ type: 'delete', label: 'Data contoh dibersihkan' });
+    }
+  }
+
+  if (executed.length) {
+    save(executed.map((e) => e.label).join(' · '));
+    render();
+  }
+  return executed;
+}
+
 function localAssistantReply(text) {
   const lower = text.toLowerCase();
+  const actions = [];
+
+  // 1. Hapus jadwal
+  if (lower.includes('hapus') && (lower.includes('jadwal') || lower.includes('agenda'))) {
+    const query = lower
+      .replace(/^(tolong|coba|bisa|mohon)?\s*hapus\s*(semua)?\s*(jadwal|agenda)\s*/i, '')
+      .replace(/(dong|ya|nih|sekarang)/gi, '')
+      .trim();
+
+    if (query === 'semua' || query === 'hari ini' || !query) {
+      const count = state.agenda.filter((a) => a.date === today).length;
+      actions.push({ type: 'delete_agenda', title: 'all' });
+      return {
+        reply: `Semua jadwal untuk hari ini (${count} item) telah berhasil dihapus.`,
+        actions,
+      };
+    }
+
+    const item = state.agenda.find((a) => a.title.toLowerCase().includes(query));
+    if (item) {
+      actions.push({ type: 'delete_agenda', id: item.id, title: item.title });
+      return {
+        reply: `Siap! Jadwal "${item.title}" telah berhasil saya hapus dari daftar jadwalmu.`,
+        actions,
+      };
+    } else {
+      return {
+        reply: `Saya tidak menemukan jadwal dengan nama "${query}". Coba cek kembali daftar di menu Jadwal.`,
+        actions: [],
+      };
+    }
+  }
+
+  // 2. Tandai / centang selesai jadwal
+  if ((lower.includes('selesai') || lower.includes('tandai') || lower.includes('centang') || lower.includes('beres')) && (lower.includes('jadwal') || lower.includes('agenda'))) {
+    const query = lower.replace(/(tolong|coba|bisa|sudah|tandai|centang|selesai|beres|jadwal|agenda|dong|ya)/gi, ' ').replace(/\s+/g, ' ').trim();
+    const item = state.agenda.find((a) => a.title.toLowerCase().includes(query));
+    if (item) {
+      actions.push({ type: 'toggle_agenda', id: item.id, title: item.title, done: true });
+      return {
+        reply: `Mantap! Jadwal "${item.title}" sudah ditandai selesai.`,
+        actions,
+      };
+    }
+  }
+
+  // 3. Navigasi / buka halaman
+  if (lower.startsWith('buka') || lower.includes('halaman') || lower.includes('pindah ke')) {
+    if (lower.includes('jadwal')) {
+      actions.push({ type: 'navigate', route: 'jadwal' });
+      return { reply: 'Membuka halaman Jadwal.', actions };
+    }
+    if (lower.includes('kebiasaan') || lower.includes('habit')) {
+      actions.push({ type: 'navigate', route: 'kebiasaan' });
+      return { reply: 'Membuka halaman Kebiasaan.', actions };
+    }
+    if (lower.includes('tagihan') || lower.includes('ppob')) {
+      actions.push({ type: 'navigate', route: 'tagihan' });
+      return { reply: 'Membuka halaman Tagihan & PPOB.', actions };
+    }
+    if (lower.includes('ringkasan') || lower.includes('dashboard') || lower.includes('home')) {
+      actions.push({ type: 'navigate', route: 'ringkasan' });
+      return { reply: 'Membuka halaman Ringkasan.', actions };
+    }
+  }
+
+  // 4. Hapus kebiasaan
+  if (lower.includes('hapus') && (lower.includes('kebiasaan') || lower.includes('habit'))) {
+    const query = lower.replace(/(tolong|coba|bisa|hapus|kebiasaan|habit|dong|ya)/gi, ' ').replace(/\s+/g, ' ').trim();
+    const item = state.habits.find((h) => h.title.toLowerCase().includes(query));
+    if (item) {
+      actions.push({ type: 'delete_habit', id: item.id, title: item.title });
+      return {
+        reply: `Kebiasaan "${item.title}" telah berhasil dihapus.`,
+        actions,
+      };
+    }
+  }
+
+  // 5. Tambah kebiasaan
+  if (lower.includes('tambah') && (lower.includes('kebiasaan') || lower.includes('habit'))) {
+    const title = text.replace(/(tolong|coba|bantu|tambahkan|tambah|kebiasaan|habit|baru|dong|ya)/gi, ' ').replace(/\s+/g, ' ').trim();
+    if (title) {
+      actions.push({ type: 'add_habit', title: title.charAt(0).toUpperCase() + title.slice(1) });
+      return {
+        reply: `Kebiasaan baru "${title}" sudah berhasil ditambahkan!`,
+        actions,
+      };
+    }
+  }
+
+  // 6. Hapus tagihan
+  if (lower.includes('hapus') && (lower.includes('tagihan') || lower.includes('bill'))) {
+    const query = lower.replace(/(tolong|coba|bisa|hapus|tagihan|bill|dong|ya)/gi, ' ').replace(/\s+/g, ' ').trim();
+    const item = state.bills.find((b) => b.title.toLowerCase().includes(query));
+    if (item) {
+      actions.push({ type: 'delete_bill', id: item.id, title: item.title });
+      return {
+        reply: `Tagihan "${item.title}" telah berhasil dihapus.`,
+        actions,
+      };
+    }
+  }
+
+  // 7. Bayar tagihan
+  if ((lower.includes('bayar') || lower.includes('lunas')) && (lower.includes('tagihan') || lower.includes('bill'))) {
+    const query = lower.replace(/(tolong|coba|bisa|bayar|lunas|sudah|tagihan|bill|dong|ya)/gi, ' ').replace(/\s+/g, ' ').trim();
+    const item = state.bills.find((b) => b.title.toLowerCase().includes(query));
+    if (item) {
+      actions.push({ type: 'toggle_bill', id: item.id, title: item.title, paid: true });
+      return {
+        reply: `Tagihan "${item.title}" berhasil ditandai lunas!`,
+        actions,
+      };
+    }
+  }
+
+  // 8. Tambah tagihan
+  if (lower.includes('tambah') && (lower.includes('tagihan') || lower.includes('bill'))) {
+    const amountMatch = lower.match(/(?:rp\.?|sebesar)?\s*(\d+(?:[.,]\d+)?)\s*(?:rb|ribu|k|jt|juta)?/);
+    let amount = 50000;
+    if (amountMatch) {
+      let num = parseFloat(amountMatch[1].replace(',', '.'));
+      if (lower.includes('rb') || lower.includes('ribu') || lower.includes('k')) num *= 1000;
+      if (lower.includes('jt') || lower.includes('juta')) num *= 1000000;
+      amount = Math.round(num);
+    }
+    let title = text.replace(/(tolong|coba|tambahkan|tambah|tagihan|bill|sebesar|rp\.?\s*\d+|ribu|juta|rb|k|jt)/gi, ' ').replace(/\s+/g, ' ').trim();
+    if (!title) title = 'Tagihan Baru';
+    actions.push({ type: 'add_bill', title: title.charAt(0).toUpperCase() + title.slice(1), amount, date: today });
+    return {
+      reply: `Tagihan "${title}" sebesar ${rupiah.format(amount)} telah dicatat!`,
+      actions,
+    };
+  }
+
+  // Tanggal & Waktu extraction
   let date = today;
   if (lower.includes('besok')) {
     date = shifted(today, 1);
@@ -555,20 +878,20 @@ function localAssistantReply(text) {
 
   if (isGreeting) {
     return {
-      reply: 'Halo! Ada kegiatan atau rencana yang ingin kamu jadwalkan atau obrolkan hari ini?',
-      draft: null,
+      reply: 'Halo! Saya asisten Ritme. Kamu bisa minta saya tambah/hapus jadwal, centang kebiasaan, catat tagihan, atau navigasi halaman.',
+      actions: [],
     };
   }
   if (isThanks) {
     return {
-      reply: 'Sama-sama! Senang bisa membantu kelancaran harimu.',
-      draft: null,
+      reply: 'Sama-sama! Senang bisa membantu mengelola semua agendamu.',
+      actions: [],
     };
   }
   if (isAbout) {
     return {
-      reply: 'Saya Ritme, asisten pribadi berbasis Gemini. Kamu bisa ngobrol santai denganku, mendikte jadwal, atau minta dibuatkan agenda otomatis.',
-      draft: null,
+      reply: 'Saya asisten AI otonom Ritme. Beritahu saya apa yang ingin kamu lakukan: misal "hapus jadwal review", "tambah agenda besok jam 2", "centang kebiasaan minum air", atau "buka halaman tagihan".',
+      actions: [],
     };
   }
 
@@ -580,16 +903,17 @@ function localAssistantReply(text) {
       .trim();
     if (!title || title.length < 3) title = text.slice(0, 50);
     title = title.charAt(0).toUpperCase() + title.slice(1);
+    actions.push({ type: 'add_agenda', title, date, time });
     return {
-      reply: `Saya buatkan draf jadwal untuk "${title}" pada ${fullDate.format(asDate(date))}${time ? ` pukul ${time} WIB` : ''}. Silakan tekan tombol Simpan di bawah jika sudah sesuai.`,
-      draft: { kind: 'agenda', title, date, time }
-    };
-  } else {
-    return {
-      reply: `Saya catat ini: "${text}". Silakan tekan Simpan untuk menyimpannya ke catatan pribadi Anda.`,
-      draft: { kind: 'note', title: 'Catatan', note: text }
+      reply: `Siap! Sudah saya tambahkan ke jadwal: "${title}" pada ${fullDate.format(asDate(date))}${time ? ` pukul ${time} WIB` : ''}.`,
+      actions,
     };
   }
+
+  return {
+    reply: `Saya catat ini: "${text}".`,
+    actions: [{ type: 'add_note', title: 'Catatan', note: text }],
+  };
 }
 
 let activeSpeechRec;
@@ -802,9 +1126,13 @@ function openAgent() {
     ? agentMessages.map((message, index) => {
         const draft = message.draft;
         const preview = draft?.kind === 'agenda' ? [draft.date, draft.time].filter(Boolean).join(' · ') : draft?.note;
+        const actionsHtml = message.actions?.length
+          ? `<div class="agent-actions-list">${message.actions.map((act) => `<span class="agent-action-badge ${act.type?.includes('delete') ? 'danger' : ''}">${icon(act.type?.includes('delete') ? 'trash' : 'check')} ${safe(act.label)}</span>`).join('')}</div>`
+          : '';
         return `<article class="agent-message ${message.role === 'user' ? 'is-user' : 'is-model'}">
           <strong>${message.role === 'user' ? 'Kamu' : 'Gemini'}</strong>
           <p>${safe(message.text).replace(/\n/g, '<br>')}</p>
+          ${actionsHtml}
           ${draft ? `<div class="agent-draft">
             <strong>${draft.kind === 'agenda' ? 'Jadwal' : 'Catatan'} · ${safe(draft.title)}</strong>
             <p>${safe(preview)}</p>
@@ -812,7 +1140,7 @@ function openAgent() {
           </div>` : ''}
         </article>`;
       }).join('')
-    : '<p class="empty" style="text-align: center; padding: 24px 0;">Mulai obrolan dengan Gemini! Sapa, tanyakan jadwal, atau minta dicatatkan rencana kegiatanmu.</p>';
+    : '<p class="empty" style="text-align: center; padding: 24px 0;">Mulai obrolan dengan Gemini! Sapa, minta buatkan atau hapus jadwal, centang kebiasaan, catat tagihan, atau navigasi halaman.</p>';
 
   const notes = savedNotes.map((note) => `<article class="agent-message"><strong>${safe(note.title)}</strong><p>${safe(note.note)}</p></article>`).join('');
   modal('Asisten Gemini', `
@@ -858,35 +1186,52 @@ async function sendAgentMessage(form) {
   if (status) status.textContent = 'Gemini sedang mengetik…';
 
   const messages = agentMessages.slice(-10).map(({ role, text }) => ({ role, text }));
+  const contextState = {
+    agenda: state.agenda.map(({ id, title, date, time, done, type }) => ({ id, title, date, time, done, type })),
+    habits: state.habits.map(({ id, title, type, days }) => ({ id, title, type, daysDone: days.includes(today) })),
+    bills: state.bills.map(({ id, title, amount, date, paid, type }) => ({ id, title, amount, date, paid, type })),
+    today,
+  };
 
   try {
     let replyText = '';
+    let executed = [];
     let draft = null;
 
     try {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages }),
+        body: JSON.stringify({ messages, state: contextState }),
       });
 
       if (response.ok) {
         const data = await response.json();
         replyText = data.reply || '';
-        draft = data.draft || null;
+        if (Array.isArray(data.actions) && data.actions.length) {
+          executed = executeAgentActions(data.actions);
+        } else if (data.draft) {
+          draft = data.draft;
+        }
       } else {
         const local = localAssistantReply(text);
         replyText = local.reply;
         draft = local.draft;
+        if (Array.isArray(local.actions) && local.actions.length) {
+          executed = executeAgentActions(local.actions);
+        }
       }
     } catch {
       const local = localAssistantReply(text);
       replyText = local.reply;
       draft = local.draft;
+      if (Array.isArray(local.actions) && local.actions.length) {
+        executed = executeAgentActions(local.actions);
+      }
     }
 
     if (!replyText) replyText = 'Baik, pesanmu sudah saya terima!';
-    agentMessages.push({ role: 'model', text: replyText, draft });
+    agentMessages.push({ role: 'model', text: replyText, draft, actions: executed });
   } catch (error) {
     agentMessages.push({ role: 'model', text: `Maaf, terjadi kendala: ${error.message}` });
   } finally {

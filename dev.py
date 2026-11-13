@@ -76,28 +76,69 @@ class RitmeHandler(SimpleHTTPRequestHandler):
         try:
             data = json.loads(raw_body)
             messages = data.get('messages', [])
+            state = data.get('state', {})
         except Exception:
             self.send_json({'error': 'Format pesan tidak sesuai.'}, 400)
             return
 
+        today = '2026-11-13'
+        agenda_brief = [{'id': a.get('id'), 'title': a.get('title'), 'date': a.get('date'), 'time': a.get('time'), 'done': a.get('done')} for a in state.get('agenda', [])]
+        habits_brief = [{'id': h.get('id'), 'title': h.get('title'), 'type': h.get('type'), 'doneToday': h.get('daysDone')} for h in state.get('habits', [])]
+        bills_brief = [{'id': b.get('id'), 'title': b.get('title'), 'amount': b.get('amount'), 'date': b.get('date'), 'paid': b.get('paid')} for b in state.get('bills', [])]
+
+        system_prompt = f"""Kamu adalah Ritme, asisten AI otonom pribadi yang cerdas, ramah, dan solutif. Hari ini di Jakarta adalah {today}.
+Kamu memiliki kendali penuh atas data planner pengguna (menambah, menghapus, mengubah, mencentang jadwal/kebiasaan/tagihan, serta navigasi halaman).
+
+Data pengguna saat ini:
+- Jadwal ({len(agenda_brief)}): {json.dumps(agenda_brief)}
+- Kebiasaan ({len(habits_brief)}): {json.dumps(habits_brief)}
+- Tagihan ({len(bills_brief)}): {json.dumps(bills_brief)}
+
+TUGAS UTAMA:
+1. Jika pengguna memberikan perintah (seperti: "hapus jadwal X", "tambahkan jadwal besok jam 2", "tandai kebiasaan Y selesai", "buka halaman tagihan", "tambah tagihan Z", "hapus kebiasaan W"), kamu HARUS mengeksekusi aksinya dalam array "actions".
+2. Untuk hapus / ubah / centang, cari ID item yang paling cocok dari data di atas.
+3. Berikan balasan percakapan ramah dan jelas dalam bahasa Indonesia di kolom "reply".
+
+Format balasan WAJIB berupa JSON:
+{{
+  "reply": "Pesan balasan ramah dalam bahasa Indonesia",
+  "actions": [
+    {{
+      "type": "add_agenda" | "delete_agenda" | "update_agenda" | "toggle_agenda" | "add_habit" | "delete_habit" | "toggle_habit" | "add_bill" | "delete_bill" | "toggle_bill" | "navigate" | "clear_samples",
+      "id": "id-item-yang-cocok",
+      "title": "nama item",
+      "date": "YYYY-MM-DD",
+      "time": "HH:MM",
+      "amount": 100000,
+      "category": "pribadi"|"kuliah"|"bisnis"|"kesehatan"|"belajar"|"aktivitas"|"internet"|"listrik",
+      "done": true|false,
+      "paid": true|false,
+      "route": "ringkasan"|"jadwal"|"kebiasaan"|"tagihan"
+    }}
+  ]
+}}"""
+
         url = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key={API_KEY}'
         payload = {
             'systemInstruction': {
-                'parts': [{'text': 'Kamu adalah Ritme, asisten perencana pribadi berbasis AI yang ramah, ringkas, dan solutif. Balas setiap pesan pengguna secara langsung dan akrab dalam bahasa Indonesia layaknya percakapan chat. Jika pengguna menyebutkan rencana jadwal atau kegiatan, responlah dengan antusias dan sebutkan rincian kegiatan beserta waktunya.'}]
+                'parts': [{'text': system_prompt}]
             },
             'contents': [{'role': 'user' if m['role'] == 'user' else 'model', 'parts': [{'text': m['text']}]} for m in messages],
+            'generationConfig': {
+                'responseMimeType': 'application/json'
+            }
         }
         try:
             req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json'})
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=15) as resp:
                 result = json.loads(resp.read().decode())
                 parts = result.get('candidates', [{}])[0].get('content', {}).get('parts', [])
-                reply_text = '\n'.join(p.get('text', '') for p in parts if not p.get('thought')).strip()
-                last_user = next((m['text'] for m in reversed(messages) if m['role'] == 'user'), '')
-                draft = None
-                if any(k in last_user.lower() for k in ['jadwal', 'besok', 'lusa', 'jam', 'pukul', 'minggu', 'senin', 'selasa', 'rabu', 'kamis', 'jumat', 'sabtu', 'review', 'meeting', 'rapat']):
-                    draft = {'kind': 'agenda', 'title': last_user[:50], 'date': '2026-11-14', 'time': '14:00'}
-                self.send_json({'reply': reply_text, 'draft': draft})
+                raw_text = '\n'.join(p.get('text', '') for p in parts if not p.get('thought')).strip()
+                try:
+                    parsed = json.loads(raw_text)
+                    self.send_json({'reply': parsed.get('reply', 'Pesan diproses.'), 'actions': parsed.get('actions', [])})
+                except Exception:
+                    self.send_json({'reply': raw_text, 'actions': []})
         except Exception as e:
             self.send_json({'error': f'Gemini gagal merespons: {str(e)}'}, 502)
 

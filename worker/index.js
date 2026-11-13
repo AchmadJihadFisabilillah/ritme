@@ -158,21 +158,58 @@ async function chat(request, env) {
   }
 
   try {
-    const { messages } = JSON.parse(rawBody);
+    const { messages, state } = JSON.parse(rawBody);
     if (!Array.isArray(messages) || !messages.length) return json({ error: 'Pesan kosong.' }, 400);
 
     const today = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Jakarta', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 
+    const agendaBrief = (state?.agenda || []).map((a) => ({ id: a.id, title: a.title, date: a.date, time: a.time, done: a.done }));
+    const habitsBrief = (state?.habits || []).map((h) => ({ id: h.id, title: h.title, type: h.type, doneToday: h.daysDone }));
+    const billsBrief = (state?.bills || []).map((b) => ({ id: b.id, title: b.title, amount: b.amount, date: b.date, paid: b.paid }));
+
+    const systemPrompt = `Kamu adalah Ritme, asisten AI otonom pribadi yang cerdas, ramah, dan solutif. Hari ini di Jakarta adalah ${today}.
+Kamu memiliki kendali penuh atas data planner pengguna (menambah, menghapus, mengubah, mencentang jadwal/kebiasaan/tagihan, serta navigasi halaman).
+
+Data pengguna saat ini:
+- Jadwal (${agendaBrief.length}): ${JSON.stringify(agendaBrief)}
+- Kebiasaan (${habitsBrief.length}): ${JSON.stringify(habitsBrief)}
+- Tagihan (${billsBrief.length}): ${JSON.stringify(billsBrief)}
+
+TUGAS UTAMA:
+1. Jika pengguna memberikan perintah (seperti: "hapus jadwal X", "tambahkan jadwal besok jam 2", "tandai kebiasaan Y selesai", "buka halaman tagihan", "tambah tagihan Z", "hapus kebiasaan W"), kamu HARUS mengeksekusi aksinya dalam array "actions".
+2. Untuk hapus / ubah / centang, cari ID item yang paling cocok dari data di atas.
+3. Berikan balasan percakapan ramah dan jelas dalam bahasa Indonesia di kolom "reply".
+
+Format balasan WAJIB berupa JSON:
+{
+  "reply": "Pesan balasan ramah dalam bahasa Indonesia yang menjelaskan apa yang sudah kamu lakukan atau menjawab pengguna",
+  "actions": [
+    {
+      "type": "add_agenda" | "delete_agenda" | "update_agenda" | "toggle_agenda" | "add_habit" | "delete_habit" | "toggle_habit" | "add_bill" | "delete_bill" | "toggle_bill" | "navigate" | "clear_samples",
+      "id": "id-item-yang-cocok",
+      "title": "nama item",
+      "date": "YYYY-MM-DD",
+      "time": "HH:MM",
+      "amount": 100000,
+      "category": "pribadi"|"kuliah"|"bisnis"|"kesehatan"|"belajar"|"aktivitas"|"internet"|"listrik",
+      "done": true|false,
+      "paid": true|false,
+      "route": "ringkasan"|"jadwal"|"kebiasaan"|"tagihan"
+    }
+  ]
+}`;
+
     const payloadStr = JSON.stringify({
       systemInstruction: {
-        parts: [{
-          text: 'Kamu adalah Ritme, asisten perencana pribadi berbasis AI yang ramah, ringkas, dan solutif. Hari ini di Jakarta adalah ' + today + '. Balas setiap pesan pengguna secara langsung, akrab, dan jelas dalam bahasa Indonesia layaknya obrolan pesan chat. Jika pengguna menyebutkan rencana jadwal atau kegiatan, responlah dengan antusias dan sebutkan rincian kegiatan beserta waktunya.'
-        }]
+        parts: [{ text: systemPrompt }]
       },
       contents: messages.map(({ role, text }) => ({
         role: role === 'user' ? 'user' : 'model',
         parts: [{ text: text || '' }]
-      }))
+      })),
+      generationConfig: {
+        responseMimeType: 'application/json'
+      }
     });
 
     const modelsToTry = [
@@ -202,18 +239,25 @@ async function chat(request, env) {
 
     const response = await result.json();
     const parts = response.candidates?.[0]?.content?.parts ?? [];
-    const replyText = parts
+    const rawText = parts
       .filter((part) => !part.thought && typeof part.text === 'string')
       .map((part) => part.text)
       .join('\n')
       .trim();
 
-    if (!replyText) throw new Error('Empty reply');
+    if (!rawText) throw new Error('Empty reply');
 
-    const lastUserMsg = messages.filter((m) => m.role === 'user').pop()?.text || '';
-    const draft = detectDraft(lastUserMsg, replyText, today);
+    let reply = 'Pesan telah diproses.';
+    let actions = [];
+    try {
+      const parsed = JSON.parse(rawText);
+      reply = parsed.reply || reply;
+      actions = Array.isArray(parsed.actions) ? parsed.actions : [];
+    } catch {
+      reply = rawText || reply;
+    }
 
-    return json({ reply: replyText, draft });
+    return json({ reply, actions });
   } catch (err) {
     return json({ error: err.message || 'Gemini belum bisa menjawab. Coba lagi.' }, 502);
   }
