@@ -475,42 +475,40 @@ const textInput = (name, value, extra = '') => `<input type="text" name="${name}
 const dateInput = (value) => `<input type="date" name="date" min="1901-01-01" max="2099-12-31" value="${value}" required>`;
 const selectType = (types, active) => `<select name="type">${Object.entries(types).map(([key, item]) => `<option value="${key}"${key === active ? ' selected' : ''}>${item.label}</option>`).join('')}</select>`;
 
-async function toWav(blob) {
-  const AudioCtx = window.AudioContext || window.webkitAudioContext;
-  if (!AudioCtx) throw new Error('AudioContext tidak didukung.');
-  const tempCtx = new AudioCtx();
-  if (tempCtx.state === 'suspended') {
-    try { await tempCtx.resume(); } catch {}
+function resample(samples, fromRate, toRate) {
+  if (fromRate === toRate) return samples;
+  const ratio = fromRate / toRate;
+  const newLength = Math.round(samples.length / ratio);
+  const result = new Float32Array(newLength);
+  for (let i = 0; i < newLength; i++) {
+    const pos = i * ratio;
+    const index = Math.floor(pos);
+    const frac = pos - index;
+    const s1 = samples[index] || 0;
+    const s2 = samples[index + 1] || s1;
+    result[i] = s1 + frac * (s2 - s1);
   }
-  const buffer = await blob.arrayBuffer();
-  let decoded;
-  try {
-    decoded = await tempCtx.decodeAudioData(buffer);
-  } catch {
-    decoded = await new Promise((resolve, reject) => {
-      tempCtx.decodeAudioData(buffer.slice(0), resolve, reject);
-    });
-  } finally {
-    try { tempCtx.close?.(); } catch {}
-  }
+  return result;
+}
 
-  const targetSampleRate = 16000;
-  const OfflineContext = window.OfflineAudioContext || window.webkitOfflineAudioContext;
-  const trueDuration = Number.isFinite(decoded.duration) && decoded.duration > 0
-    ? decoded.duration
-    : decoded.length / decoded.sampleRate;
-  const targetLength = Math.max(1, Math.round(trueDuration * targetSampleRate));
-  const offlineCtx = new OfflineContext(1, targetLength, targetSampleRate);
+function encodeWav(samples, sampleRate = 16000) {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
 
-  const source = offlineCtx.createBufferSource();
-  source.buffer = decoded;
-  source.connect(offlineCtx.destination);
-  source.start(0);
+  view.setUint8(0, 0x52); view.setUint8(1, 0x49); view.setUint8(2, 0x46); view.setUint8(3, 0x46); // RIFF
+  view.setUint32(4, 36 + samples.length * 2, true);
+  view.setUint8(8, 0x57); view.setUint8(9, 0x41); view.setUint8(10, 0x56); view.setUint8(11, 0x45); // WAVE
+  view.setUint8(12, 0x66); view.setUint8(13, 0x6d); view.setUint8(14, 0x74); view.setUint8(15, 0x20); // fmt 
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, 1, true); // Mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  view.setUint8(36, 0x64); view.setUint8(37, 0x61); view.setUint8(38, 0x74); view.setUint8(39, 0x61); // data
+  view.setUint32(40, samples.length * 2, true);
 
-  const rendered = await offlineCtx.startRendering();
-  const samples = rendered.getChannelData(0);
-
-  // Periksa amplitudo dan normalisasi audio jika terlalu pelan
   let maxAmp = 0;
   for (let i = 0; i < samples.length; i++) {
     const abs = Math.abs(samples[i]);
@@ -518,25 +516,13 @@ async function toWav(blob) {
   }
   const gain = (maxAmp > 0.0005 && maxAmp < 0.5) ? Math.min(6, 0.7 / maxAmp) : 1;
 
-  const bytes = new DataView(new ArrayBuffer(44 + samples.length * 2));
-  const ascii = (offset, text) => [...text].forEach((letter, index) => bytes.setUint8(offset + index, letter.charCodeAt(0)));
-  ascii(0, 'RIFF');
-  bytes.setUint32(4, bytes.byteLength - 8, true);
-  ascii(8, 'WAVEfmt ');
-  bytes.setUint32(16, 16, true);
-  bytes.setUint16(20, 1, true);
-  bytes.setUint16(22, 1, true);
-  bytes.setUint32(24, 16000, true);
-  bytes.setUint32(28, 32000, true);
-  bytes.setUint16(32, 2, true);
-  bytes.setUint16(34, 16, true);
-  ascii(36, 'data');
-  bytes.setUint32(40, samples.length * 2, true);
-  for (let i = 0; i < samples.length; i++) {
-    const val = Math.max(-1, Math.min(1, samples[i] * gain));
-    bytes.setInt16(44 + i * 2, val * 32767, true);
+  let offset = 44;
+  for (let i = 0; i < samples.length; i++, offset += 2) {
+    const s = Math.max(-1, Math.min(1, samples[i] * gain));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
   }
-  return { buffer: bytes.buffer, isSilent: maxAmp < 0.0005 };
+
+  return { buffer, isSilent: maxAmp < 0.0005 };
 }
 
 function executeAgentActions(actions) {
@@ -938,8 +924,7 @@ function localAssistantReply(text) {
   };
 }
 
-let activeRecording;
-let activeSpeechRec;
+let activeAudioCapture = null;
 
 async function dictateTitle(trigger) {
   const form = trigger.closest('form') || dialog.querySelector('form');
@@ -956,60 +941,148 @@ async function dictateTitle(trigger) {
   };
 
   // 1. Jika sedang merekam, ketukan kedua akan stop dan kirim langsung
-  if (activeRecording) {
-    if (activeRecording.state === 'recording') {
-      try { activeRecording.stop(); } catch {}
-    }
-    return;
-  }
-  if (activeSpeechRec) {
-    try { activeSpeechRec.stop(); } catch {}
-    try { activeSpeechRec.abort(); } catch {}
-    activeSpeechRec = undefined;
-    setMicState(false);
-    trigger.disabled = false;
+  if (activeAudioCapture) {
+    const capture = activeAudioCapture;
+    activeAudioCapture = null;
+    capture.stop();
     return;
   }
 
-  // 2. Gunakan MediaRecorder sebagai mesin utama yang stabil di iOS & Android
-  if (navigator.mediaDevices?.getUserMedia && window.MediaRecorder) {
-    return startMediaRecorder(trigger, form, status, input, setMicState);
+  // 2. Periksa konteks HTTPS untuk perangkat HP
+  if (!window.isSecureContext) {
+    if (status) status.textContent = 'Mikrofon di HP memerlukan HTTPS. Buka via link Vercel (https://…).';
+    return;
   }
 
-  // 3. Fallback jika browser sangat lama tidak mendukung getUserMedia
-  startSpeechRecognitionFallback(trigger, form, status, input, setMicState);
+  if (!navigator.mediaDevices?.getUserMedia) {
+    if (status) status.textContent = 'Browser ini tidak mendukung akses mikrofon.';
+    return;
+  }
+
+  return startAudioCapture(trigger, form, status, input, setMicState);
 }
 
-async function startMediaRecorder(trigger, form, status, input, setMicState) {
+async function startAudioCapture(trigger, form, status, input, setMicState) {
   const abort = new AbortController();
   let stream;
-  let recorder;
-  let timeout;
   let audioCtx;
+  let source;
+  let processor;
+  let timeout;
+  const pcmChunks = [];
+  let totalLength = 0;
+  let isStopped = false;
 
-  const cleanup = () => {
-    clearTimeout(timeout);
-    try { stream?.getTracks().forEach((track) => track.stop()); } catch {}
-    try { audioCtx?.close(); } catch {}
-    if (activeRecording === recorder) activeRecording = undefined;
-    setMicState(false);
-  };
+  let muteGain;
 
-  const cancel = () => {
+  const onCloseDialog = () => {
     abort.abort();
-    if (recorder?.state === 'recording') {
-      try { recorder.stop(); } catch {}
-    }
     cleanup();
   };
 
-  dialog.addEventListener('close', cancel, { once: true });
+  const cleanup = () => {
+    clearTimeout(timeout);
+    dialog.removeEventListener('close', onCloseDialog);
+    try { processor?.disconnect(); } catch {}
+    try { source?.disconnect(); } catch {}
+    try { muteGain?.disconnect(); } catch {}
+    try { stream?.getTracks().forEach((t) => t.stop()); } catch {}
+    try { audioCtx?.close(); } catch {}
+    activeAudioCapture = null;
+    setMicState(false);
+  };
+
+  const stopAndTranscribe = async () => {
+    if (isStopped || abort.signal.aborted) return;
+    isStopped = true;
+    cleanup();
+    trigger.disabled = true;
+    if (status) status.textContent = 'Memproses suara dengan AI…';
+
+    try {
+      if (!pcmChunks.length || totalLength < 1600) {
+        if (status) status.textContent = 'Suara tidak terdengar. Coba bicara lebih dekat.';
+        trigger.disabled = false;
+        return;
+      }
+
+      // Gabungkan seluruh sampel PCM float32
+      const merged = new Float32Array(totalLength);
+      let offset = 0;
+      for (const chunk of pcmChunks) {
+        merged.set(chunk, offset);
+        offset += chunk.length;
+      }
+
+      // Resample ke 16kHz
+      const resampled = resample(merged, audioCtx?.sampleRate || 44100, 16000);
+      const { buffer, isSilent } = encodeWav(resampled, 16000);
+
+      if (isSilent) {
+        if (status) status.textContent = 'Suara tidak tertangkap jelas. Coba bicara lebih dekat.';
+        trigger.disabled = false;
+        return;
+      }
+
+      const response = await fetch('/api/transcribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'audio/wav' },
+        body: buffer,
+        signal: abort.signal,
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const spoken = (data.transcript || '').trim();
+        if (spoken && input) {
+          input.value = spoken.slice(0, input.maxLength || 1500);
+          if (status) status.textContent = 'Suara diterima!';
+          if (dialog.open && dialog.classList.contains('agent-modal')) {
+            sendAgentMessage(form);
+          }
+        } else {
+          if (status) status.textContent = 'Suara tidak terdengar jelas.';
+        }
+      } else if (response.status === 405 || response.status === 404) {
+        if (input) {
+          input.value = 'Besok jam 2 siang review pesanan JStore';
+        }
+        if (status) status.textContent = 'Mode simulasi suara selesai.';
+        if (dialog.open && dialog.classList.contains('agent-modal')) {
+          sendAgentMessage(form);
+        }
+      } else {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || `Transkripsi gagal (${response.status}).`);
+      }
+    } catch (err) {
+      if (!abort.signal.aborted && status) {
+        status.textContent = err.message || 'Transkripsi gagal.';
+      }
+    } finally {
+      trigger.disabled = false;
+    }
+  };
+
+  dialog.addEventListener('close', onCloseDialog, { once: true });
   trigger.disabled = true;
   if (status) status.textContent = 'Membuka mikrofon…';
 
   try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) throw new Error('Web Audio tidak didukung browser.');
+
+    audioCtx = new AudioContextClass();
+    if (audioCtx.state === 'suspended') {
+      await audioCtx.resume();
+    }
+
     stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
     });
 
     if (abort.signal.aborted || !dialog.open) {
@@ -1017,133 +1090,62 @@ async function startMediaRecorder(trigger, form, status, input, setMicState) {
       return;
     }
 
-    let mimeType = '';
-    if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) mimeType = 'audio/webm;codecs=opus';
-    else if (MediaRecorder.isTypeSupported('audio/webm')) mimeType = 'audio/webm';
-    else if (MediaRecorder.isTypeSupported('audio/mp4')) mimeType = 'audio/mp4';
-    else if (MediaRecorder.isTypeSupported('audio/aac')) mimeType = 'audio/aac';
+    source = audioCtx.createMediaStreamSource(stream);
+    processor = audioCtx.createScriptProcessor(4096, 1, 1);
+    muteGain = audioCtx.createGain();
+    muteGain.gain.value = 0;
 
-    recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-    activeRecording = recorder;
+    let speechDetected = false;
+    let silenceStart = null;
 
-    const chunks = [];
-    recorder.ondataavailable = (event) => {
-      if (event.data && event.data.size > 0) chunks.push(event.data);
-    };
+    processor.onaudioprocess = (e) => {
+      if (isStopped) return;
+      const channelData = e.inputBuffer.getChannelData(0);
+      pcmChunks.push(new Float32Array(channelData));
+      totalLength += channelData.length;
 
-    recorder.onerror = () => {
-      cleanup();
-      if (status) status.textContent = 'Perekaman suara gagal. Coba lagi.';
-      trigger.disabled = false;
-    };
-
-    recorder.onstop = async () => {
-      cleanup();
-      if (abort.signal.aborted) return;
-      trigger.disabled = true;
-      if (status) status.textContent = 'Memproses suara dengan AI…';
-
-      try {
-        if (!chunks.length) throw new Error('Tidak ada data suara.');
-        const rawBlob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
-        const { buffer: audio, isSilent } = await toWav(rawBlob);
-
-        if (isSilent) {
-          if (status) status.textContent = 'Suara tidak tertangkap jelas. Coba bicara lebih dekat.';
-          trigger.disabled = false;
-          return;
+      // Bersihkan output buffer agar speaker perangkat tidak feedback / bising
+      if (e.outputBuffer) {
+        for (let ch = 0; ch < e.outputBuffer.numberOfChannels; ch++) {
+          e.outputBuffer.getChannelData(ch).fill(0);
         }
+      }
 
-        const response = await fetch('/api/transcribe', {
-          method: 'POST',
-          headers: { 'Content-Type': 'audio/wav' },
-          body: audio,
-          signal: abort.signal,
-        });
+      // Hitung volume suara untuk auto-stop ketika hening
+      let sum = 0;
+      for (let i = 0; i < channelData.length; i += 8) {
+        sum += Math.abs(channelData[i]);
+      }
+      const amp = sum / (channelData.length / 8);
 
-        if (response.ok) {
-          const data = await response.json();
-          const spoken = (data.transcript || '').trim();
-          if (spoken && input) {
-            input.value = spoken.slice(0, input.maxLength || 1500);
-            if (status) status.textContent = 'Suara diterima!';
-            if (dialog.open && dialog.classList.contains('agent-modal')) {
-              sendAgentMessage(form);
-            }
-          } else {
-            if (status) status.textContent = 'Suara tidak terdengar jelas.';
-          }
-        } else if (response.status === 405 || response.status === 404) {
-          if (input) {
-            input.value = 'Besok jam 2 siang review pesanan JStore';
-          }
-          if (status) status.textContent = 'Mode simulasi suara selesai.';
-          if (dialog.open && dialog.classList.contains('agent-modal')) {
-            sendAgentMessage(form);
-          }
-        } else {
-          const data = await response.json().catch(() => ({}));
-          throw new Error(data.error || `Transkripsi gagal (${response.status}).`);
+      if (amp > 0.008) {
+        speechDetected = true;
+        silenceStart = null;
+      } else if (speechDetected) {
+        if (!silenceStart) {
+          silenceStart = Date.now();
+        } else if (Date.now() - silenceStart > 1800) {
+          silenceStart = null;
+          stopAndTranscribe();
         }
-      } catch (error) {
-        if (!abort.signal.aborted && status) {
-          status.textContent = error.message || 'Transkripsi gagal.';
-        }
-      } finally {
-        trigger.disabled = false;
-        dialog.removeEventListener('close', cancel);
       }
     };
 
-    recorder.start(250);
+    source.connect(processor);
+    processor.connect(muteGain);
+    muteGain.connect(audioCtx.destination);
+
+    activeAudioCapture = {
+      abort,
+      stop: stopAndTranscribe,
+    };
+
     setMicState(true);
     trigger.disabled = false;
     if (status) status.textContent = 'Mendengarkan… Bicara sekarang (ketuk mic lagi untuk kirim).';
 
-    // Deteksi keheningan otomatis setelah berbicara
-    try {
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      if (AudioCtx) {
-        audioCtx = new AudioCtx();
-        if (audioCtx.state === 'suspended') {
-          await audioCtx.resume();
-        }
-        const source = audioCtx.createMediaStreamSource(stream);
-        const analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 256;
-        source.connect(analyser);
-
-        const dataArray = new Uint8Array(analyser.frequencyBinCount);
-        let silenceStart = null;
-        let speechDetected = false;
-
-        const checkAudio = () => {
-          if (!activeRecording || activeRecording !== recorder) return;
-          analyser.getByteFrequencyData(dataArray);
-          let sum = 0;
-          for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
-          const avg = sum / dataArray.length;
-
-          if (avg > 14) {
-            speechDetected = true;
-            silenceStart = null;
-          } else if (speechDetected) {
-            if (!silenceStart) {
-              silenceStart = Date.now();
-            } else if (Date.now() - silenceStart > 1800) {
-              // Otomatis stop setelah 1.8 detik hening seusai berbicara
-              if (recorder.state === 'recording') recorder.stop();
-              return;
-            }
-          }
-          requestAnimationFrame(checkAudio);
-        };
-        requestAnimationFrame(checkAudio);
-      }
-    } catch {}
-
     timeout = setTimeout(() => {
-      if (recorder.state === 'recording') recorder.stop();
+      stopAndTranscribe();
     }, 15000);
 
   } catch (err) {
@@ -1154,66 +1156,6 @@ async function startMediaRecorder(trigger, form, status, input, setMicState) {
         ? 'Izin mikrofon ditolak di browser.'
         : (err?.message || 'Mikrofon belum bisa digunakan.');
     }
-    dialog.removeEventListener('close', cancel);
-  }
-}
-
-function startSpeechRecognitionFallback(trigger, form, status, input, setMicState) {
-  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRec) {
-    if (status) status.textContent = 'Browser ini tidak mendukung mikrofon.';
-    return;
-  }
-
-  try {
-    const recognition = new SpeechRec();
-    recognition.lang = 'id-ID';
-    recognition.continuous = false;
-    recognition.interimResults = true;
-
-    activeSpeechRec = recognition;
-    setMicState(true);
-    trigger.disabled = false;
-    if (status) status.textContent = 'Mendengarkan… Bicara sekarang.';
-
-    let transcript = '';
-    recognition.onresult = (event) => {
-      let interim = '';
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const item = event.results[i][0].transcript;
-        if (event.results[i].isFinal) transcript += item + ' ';
-        else interim += item;
-      }
-      const text = (transcript + interim).trim();
-      if (text && input) input.value = text;
-    };
-
-    recognition.onerror = (e) => {
-      activeSpeechRec = undefined;
-      setMicState(false);
-      trigger.disabled = false;
-      if (status) status.textContent = e.error === 'not-allowed' ? 'Izin mikrofon ditolak.' : 'Suara tidak terdeteksi.';
-    };
-
-    recognition.onend = () => {
-      activeSpeechRec = undefined;
-      setMicState(false);
-      trigger.disabled = false;
-      const spoken = (input?.value || '').trim();
-      if (spoken) {
-        if (status) status.textContent = 'Suara diterima!';
-        if (dialog.open && dialog.classList.contains('agent-modal')) {
-          sendAgentMessage(form);
-        }
-      }
-    };
-
-    recognition.start();
-  } catch {
-    activeSpeechRec = undefined;
-    setMicState(false);
-    trigger.disabled = false;
-    if (status) status.textContent = 'Gagal memulai mikrofon.';
   }
 }
 
@@ -1270,11 +1212,11 @@ function updateAgentView() {
     statusEl.textContent = agentPending ? 'Gemini sedang memproses…' : '';
   }
   const voiceStatus = dialog.querySelector('.voice-status');
-  if (voiceStatus && !activeRecording) {
+  if (voiceStatus && !activeAudioCapture) {
     voiceStatus.textContent = '';
   }
   const micBtn = dialog.querySelector('.agent-mic-btn');
-  if (micBtn && !activeRecording) {
+  if (micBtn && !activeAudioCapture) {
     micBtn.disabled = agentPending;
     micBtn.classList.remove('is-recording');
     micBtn.title = 'Rekam suara';
@@ -1637,13 +1579,10 @@ dialog.addEventListener('close', () => {
   submitDialog = undefined;
   currentSimulation = undefined;
   dialog.className = '';
-  if (activeSpeechRec) {
-    try { activeSpeechRec.stop(); } catch {}
-    activeSpeechRec = undefined;
-  }
-  if (activeRecording?.state === 'recording') {
-    try { activeRecording.stop(); } catch {}
-    activeRecording = undefined;
+  if (activeAudioCapture) {
+    try { activeAudioCapture.abort?.abort(); } catch {}
+    try { activeAudioCapture.stop?.(); } catch {}
+    activeAudioCapture = null;
   }
 });
 

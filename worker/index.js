@@ -24,7 +24,7 @@ function isSameOrigin(request) {
 async function transcribe(request, env) {
   if (!isSameOrigin(request)) return json({ error: 'Asal permintaan tidak sesuai.' }, 403);
   if (!env.GEMINI_API_KEY) return json({ error: 'Dikte Gemini menunggu konfigurasi API key.' }, 503);
-  if (request.headers.get('Content-Type') !== 'audio/wav') return json({ error: 'Format audio tidak didukung.' }, 415);
+  if (!request.headers.get('Content-Type')?.startsWith('audio/wav')) return json({ error: 'Format audio tidak didukung.' }, 415);
 
   const reader = request.body?.getReader();
   if (!reader) return json({ error: 'Rekaman kosong.' }, 400);
