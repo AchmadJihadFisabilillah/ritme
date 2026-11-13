@@ -75,31 +75,33 @@ async function transcribe(request, env) {
     });
 
     const transcribeModels = [
-      'gemini-3.5-transcribe',
       'gemini-flash-lite-latest',
+      'gemini-3.5-flash',
       'gemini-3.8-flash',
     ];
 
-    let result = null;
+    let transcript = '';
     for (const model of transcribeModels) {
       try {
-        result = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        const result = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
           signal: AbortSignal.timeout(12000),
           body: requestBody,
         });
-        if (result.ok || result.status === 429) break;
+        if (result.ok) {
+          const payload = await result.json();
+          transcript = payload.candidates?.[0]?.content?.parts
+            ?.filter((part) => !part.thought && typeof part.text === 'string')
+            .map((part) => part.text).join(' ').trim();
+          if (transcript) break;
+        }
       } catch {}
     }
 
-    if (result.status === 429) return json({ error: 'Kuota Gemini sedang terbatas. Coba lagi nanti.' }, 429);
-    if (!result.ok) return json({ error: 'Gemini gagal memproses audio. Cek API key dan akses model.' }, 502);
-    const payload = await result.json();
-    const transcript = payload.candidates?.[0]?.content?.parts
-      ?.filter((part) => !part.thought && typeof part.text === 'string')
-      .map((part) => part.text).join(' ').trim();
-    if (!transcript) return json({ error: 'Gemini tidak mendeteksi ucapan. Coba bicara lebih jelas atau dekatkan mikrofon.' }, 422);
+    if (!transcript) {
+      return json({ error: 'Suara tidak terdeteksi. Silakan coba bicara lebih jelas atau ketik pesan langsung.' }, 422);
+    }
     return json({ transcript });
   } catch {
     return json({ error: 'Gemini tidak bisa dijangkau. Coba lagi.' }, 502);

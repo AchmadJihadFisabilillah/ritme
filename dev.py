@@ -113,7 +113,7 @@ class RitmeHandler(SimpleHTTPRequestHandler):
             return
 
         b64_audio = base64.b64encode(audio_bytes).decode('utf-8')
-        url = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-transcribe:generateContent?key={API_KEY}'
+        url = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key={API_KEY}'
         payload = {
             'contents': [{
                 'parts': [

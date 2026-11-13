@@ -661,8 +661,12 @@ async function dictateTitle(trigger) {
         activeSpeechRec = undefined;
         trigger.lastChild.textContent = 'Rekam suara';
         trigger.disabled = false;
-        if (input.value.trim()) {
-          status.textContent = 'Dikte suara berhasil dimasukkan!';
+        const spoken = input.value.trim();
+        if (spoken) {
+          status.textContent = 'Dikte berhasil dimasukkan!';
+          if (dialog.querySelector('#dialog-title')?.textContent.includes('Gemini')) {
+            sendAgentMessage(form);
+          }
         } else {
           status.textContent = 'Dikte selesai.';
         }
@@ -741,13 +745,24 @@ async function fallbackMediaRecorder(trigger, form, status, input) {
         });
         if (response.ok) {
           const data = await response.json();
-          input.value = data.transcript.slice(0, input.maxLength);
-          input.setCustomValidity('');
-          status.textContent = 'Cek hasil dikte sebelum menyimpan.';
+          const spoken = (data.transcript || '').trim();
+          if (spoken) {
+            input.value = spoken.slice(0, input.maxLength);
+            input.setCustomValidity('');
+            status.textContent = 'Suara berhasil ditranskripsikan!';
+            if (dialog.querySelector('#dialog-title')?.textContent.includes('Gemini')) {
+              sendAgentMessage(form);
+            }
+          } else {
+            status.textContent = 'Suara tidak tertangkap jelas. Coba bicara lebih dekat.';
+          }
         } else if (response.status === 405 || response.status === 404) {
-          if (!input.value) input.value = 'Besok jam 2 siang review pesanan JStore';
+          input.value = 'Besok jam 2 siang review pesanan JStore';
           input.setCustomValidity('');
-          status.textContent = 'Mode simulasi suara selesai. Teks dimasukkan.';
+          status.textContent = 'Mode simulasi suara selesai.';
+          if (dialog.querySelector('#dialog-title')?.textContent.includes('Gemini')) {
+            sendAgentMessage(form);
+          }
         } else {
           const data = await response.json().catch(() => ({}));
           throw new Error(data.error || `Transkripsi gagal (${response.status}).`);
@@ -802,7 +817,7 @@ function openAgent() {
   const notes = savedNotes.map((note) => `<article class="agent-message"><strong>${safe(note.title)}</strong><p>${safe(note.note)}</p></article>`).join('');
   modal('Asisten Gemini', `
     <div class="agent-log" aria-label="Percakapan" tabindex="0" style="max-height: 280px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px;">${log}</div>
-    ${field('Pesan', '<textarea name="title" rows="2" maxlength="1500" required autofocus placeholder="Ketik pesan atau klik Rekam suara (Enter untuk kirim)…"></textarea>')}
+    ${field('Pesan', '<textarea name="title" rows="2" maxlength="1500" autofocus placeholder="Ketik pesan atau klik Rekam suara (Enter untuk kirim)…"></textarea>')}
     <div class="voice-controls">${button('Rekam suara', 'dictate-title', 'mic')}<span class="voice-status" role="status"></span></div>
     <p class="agent-status" role="status">${agentPending ? 'Gemini sedang mengetik…' : ''}</p>
     <details style="margin-top: 10px;"><summary>Catatan tersimpan (${savedNotes.length})</summary>${notes || '<p>Belum ada catatan.</p>'}</details>`,
@@ -822,9 +837,14 @@ function openAgent() {
 
 async function sendAgentMessage(form) {
   if (agentPending) return;
-  const input = form.elements.title;
-  const text = input.value.trim();
-  if (!text) return;
+  const input = form?.elements?.title || dialog.querySelector('textarea[name="title"]');
+  const text = (input?.value || '').trim();
+  if (!text) {
+    const status = dialog.querySelector('.agent-status');
+    if (status) status.textContent = 'Ketik pesan atau rekam suara terlebih dahulu.';
+    input?.focus();
+    return;
+  }
 
   // Masukkan pesan user seketika ke riwayat obrolan
   agentMessages.push({ role: 'user', text });
