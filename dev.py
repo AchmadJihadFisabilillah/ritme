@@ -98,6 +98,7 @@ TUGAS UTAMA:
 1. Jika pengguna memberikan perintah (seperti: "hapus jadwal X", "tambahkan jadwal besok jam 2", "tandai kebiasaan Y selesai", "buka halaman tagihan", "tambah tagihan Z", "hapus kebiasaan W"), kamu HARUS mengeksekusi aksinya dalam array "actions".
 2. Untuk hapus / ubah / centang, cari ID item yang paling cocok dari data di atas.
 3. Berikan balasan percakapan ramah dan jelas dalam bahasa Indonesia di kolom "reply".
+4. PENTING: Gunakan HANYA tipe aksi: "add_agenda", "delete_agenda", "update_agenda", "toggle_agenda", "add_habit", "delete_habit", "toggle_habit", "add_bill", "delete_bill", "toggle_bill", "navigate", "clear_samples". Letakkan field langsung di objek aksi (bukan di sub-objek "params").
 
 Format balasan WAJIB berupa JSON:
 {{
@@ -136,7 +137,19 @@ Format balasan WAJIB berupa JSON:
                 raw_text = '\n'.join(p.get('text', '') for p in parts if not p.get('thought')).strip()
                 try:
                     parsed = json.loads(raw_text)
-                    self.send_json({'reply': parsed.get('reply', 'Pesan diproses.'), 'actions': parsed.get('actions', [])})
+                    reply = parsed.get('reply') or parsed.get('message') or parsed.get('text') or ''
+                    actions = parsed.get('actions')
+                    if isinstance(actions, list):
+                        pass
+                    elif isinstance(parsed.get('action'), dict):
+                        actions = [parsed.get('action')]
+                    elif isinstance(parsed.get('action'), str) or isinstance(parsed.get('type'), str):
+                        actions = [parsed]
+                    else:
+                        actions = []
+                    if not reply:
+                        reply = 'Perintah sudah berhasil dijalankan.' if actions else 'Pesan diproses.'
+                    self.send_json({'reply': reply, 'actions': actions})
                 except Exception:
                     self.send_json({'reply': raw_text, 'actions': []})
         except Exception as e:

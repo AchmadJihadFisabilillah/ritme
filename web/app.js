@@ -26,6 +26,8 @@ const shapes = {
   pencil: '<path d="m15 6 3 3M4 20l4-1 12-12a2.1 2.1 0 0 0-3-3L5 16z"/>',
   trash: '<path d="M3 6h18m-2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m-6 5v6m4-6v6"/>',
   close: '<path d="m6 6 12 12M18 6 6 18"/>',
+  sparkles: '<path d="m12 3 1.9 4.8L18.7 9.7l-4.8 1.9L12 16.4l-1.9-4.8L5.3 9.7l4.8-1.9L12 3z"/><path d="M19 16l.9 2.2 2.1.9-2.1.9-.9 2.2-.9-2.2-2.1-.9 2.1-.9.9-2.2z"/>',
+  bot: '<rect x="4" y="8" width="16" height="12" rx="3"/><circle cx="9" cy="14" r="1.5" fill="currentColor"/><circle cx="15" cy="14" r="1.5" fill="currentColor"/><path d="M12 2v6M8 2h8"/>',
 };
 const brandArt = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M3 13h4v7H3zm7-5h4v12h-4zm7-5h4v17h-4z"/></svg>';
 const agendaTypes = {
@@ -460,6 +462,7 @@ function render() {
 function modal(title, body, actions, onSubmit) {
   const isOpen = dialog.open;
   submitDialog = onSubmit;
+  dialog.className = '';
   dialog.innerHTML = `<form id="modal-form"><div class="dialog-head"><h2 id="dialog-title">${title}</h2>${button('', 'close-modal', 'close', { variant: 'icon', title: 'Tutup' })}</div><div class="dialog-body">${body}</div><div class="dialog-actions">${actions}</div></form>`;
   if (!isOpen) dialog.showModal();
   (dialog.querySelector('[autofocus]') || dialog.querySelector('.dialog-actions button:last-child'))?.focus();
@@ -536,19 +539,35 @@ function executeAgentActions(actions) {
   if (!Array.isArray(actions) || !actions.length) return [];
   const executed = [];
 
-  for (const action of actions) {
-    if (!action || typeof action !== 'object') continue;
-    const type = (action.type || action.kind || '').toLowerCase();
-    const id = action.id || action.data?.id;
-    const title = action.title || action.data?.title || '';
-    const date = action.date || action.data?.date;
-    const time = action.time || action.data?.time;
-    const amount = Number(action.amount || action.data?.amount);
-    const category = action.category || action.type_category || action.data?.category || action.data?.type;
-    const route = action.route || action.target || action.data?.route || action.data?.page;
+  for (const rawAction of actions) {
+    if (!rawAction || typeof rawAction !== 'object') continue;
+    const action = {
+      ...rawAction,
+      ...(rawAction.params || {}),
+      ...(rawAction.parameters || {}),
+      ...(rawAction.args || {}),
+      ...(rawAction.data || {}),
+    };
+
+    const type = (action.type || action.kind || action.action || '').toLowerCase();
+    const id = action.id;
+    const title = String(action.title || action.name || action.activity || action.event || action.task || action.text || '').trim();
+    let d = action.date;
+    if (d === 'besok' || d === 'tomorrow') d = shifted(today, 1);
+    else if (d === 'lusa') d = shifted(today, 2);
+    else if (!d || d === 'hari ini' || d === 'today') d = today;
+    const date = d;
+    const time = action.time || '';
+    const amount = Number(action.amount);
+    const category = action.category || action.type_category || action.type;
+    const route = action.route || action.target || action.page;
+
+    const isAgenda = type.includes('agenda') || type.includes('jadwal') || type.includes('schedule') || type.includes('calendar') || type.includes('event');
+    const isHabit = type.includes('habit') || type.includes('kebiasaan');
+    const isBill = type.includes('bill') || type.includes('tagihan') || type.includes('invoice') || type.includes('ppob');
 
     // 1. TAMBAH JADWAL
-    if (type.includes('add') && (type.includes('agenda') || type.includes('schedule') || type.includes('jadwal'))) {
+    if ((type.includes('add') || type.includes('create') || type.includes('new') || type.includes('tambah')) && isAgenda) {
       const entry = {
         id: id || crypto.randomUUID(),
         title: title || 'Kegiatan Baru',
@@ -559,18 +578,18 @@ function executeAgentActions(actions) {
       };
       state.agenda.push(entry);
       agendaDate = entry.date;
-      executed.push({ type: 'add', label: `Jadwal ditambahkan: ${entry.title} (${entry.date}${entry.time ? ' ' + entry.time : ''})` });
+      executed.push({ type: 'add', label: `Jadwal ditambahkan: ${entry.title}` });
     }
 
     // 2. HAPUS JADWAL
-    else if (type.includes('delete') && (type.includes('agenda') || type.includes('schedule') || type.includes('jadwal'))) {
+    else if ((type.includes('delete') || type.includes('remove') || type.includes('hapus') || type.includes('cancel')) && isAgenda) {
       const prevLen = state.agenda.length;
       if (id) {
         state.agenda = state.agenda.filter((a) => a.id !== id);
-      } else if (title) {
+      } else if (title && title.toLowerCase() !== 'all' && title.toLowerCase() !== 'semua') {
         const query = title.toLowerCase();
         state.agenda = state.agenda.filter((a) => !a.title.toLowerCase().includes(query));
-      } else if (type.includes('all') || title === 'all') {
+      } else {
         state.agenda = state.agenda.filter((a) => a.date !== today);
       }
       if (state.agenda.length < prevLen) {
@@ -579,10 +598,10 @@ function executeAgentActions(actions) {
     }
 
     // 3. UBAH JADWAL
-    else if (type.includes('update') && (type.includes('agenda') || type.includes('schedule') || type.includes('jadwal'))) {
+    else if ((type.includes('update') || type.includes('edit') || type.includes('ubah') || type.includes('change')) && isAgenda) {
       const item = state.agenda.find((a) => (id && a.id === id) || (title && a.title.toLowerCase().includes(title.toLowerCase())));
       if (item) {
-        if (action.newTitle || action.data?.newTitle) item.title = action.newTitle || action.data?.newTitle;
+        if (action.newTitle) item.title = action.newTitle;
         if (date) item.date = date;
         if (time !== undefined) item.time = time;
         if (category && Object.hasOwn(agendaTypes, category)) item.type = category;
@@ -591,7 +610,7 @@ function executeAgentActions(actions) {
     }
 
     // 4. CENTANG / TOGGLE JADWAL
-    else if (type.includes('toggle') && (type.includes('agenda') || type.includes('schedule') || type.includes('jadwal'))) {
+    else if ((type.includes('toggle') || type.includes('complete') || type.includes('done') || type.includes('finish') || type.includes('centang') || type.includes('selesai') || type.includes('check')) && isAgenda) {
       const item = state.agenda.find((a) => (id && a.id === id) || (title && a.title.toLowerCase().includes(title.toLowerCase())));
       if (item) {
         item.done = action.done !== undefined ? Boolean(action.done) : !item.done;
@@ -600,7 +619,7 @@ function executeAgentActions(actions) {
     }
 
     // 5. TAMBAH KEBIASAAN
-    else if (type.includes('add') && (type.includes('habit') || type.includes('kebiasaan'))) {
+    else if ((type.includes('add') || type.includes('create') || type.includes('tambah')) && isHabit) {
       const entry = {
         id: id || crypto.randomUUID(),
         title: title || 'Kebiasaan Baru',
@@ -612,7 +631,7 @@ function executeAgentActions(actions) {
     }
 
     // 6. HAPUS KEBIASAAN
-    else if (type.includes('delete') && (type.includes('habit') || type.includes('kebiasaan'))) {
+    else if ((type.includes('delete') || type.includes('remove') || type.includes('hapus')) && isHabit) {
       const prevLen = state.habits.length;
       if (id) {
         state.habits = state.habits.filter((h) => h.id !== id);
@@ -626,7 +645,7 @@ function executeAgentActions(actions) {
     }
 
     // 7. CENTANG KEBIASAAN
-    else if (type.includes('toggle') && (type.includes('habit') || type.includes('kebiasaan'))) {
+    else if ((type.includes('toggle') || type.includes('check') || type.includes('centang')) && isHabit) {
       const item = state.habits.find((h) => (id && h.id === id) || (title && h.title.toLowerCase().includes(title.toLowerCase())));
       if (item) {
         const d = date || today;
@@ -640,7 +659,7 @@ function executeAgentActions(actions) {
     }
 
     // 8. TAMBAH TAGIHAN
-    else if (type.includes('add') && (type.includes('bill') || type.includes('tagihan'))) {
+    else if ((type.includes('add') || type.includes('create') || type.includes('tambah')) && isBill) {
       const entry = {
         id: id || crypto.randomUUID(),
         title: title || 'Tagihan Baru',
@@ -654,7 +673,7 @@ function executeAgentActions(actions) {
     }
 
     // 9. HAPUS TAGIHAN
-    else if (type.includes('delete') && (type.includes('bill') || type.includes('tagihan'))) {
+    else if ((type.includes('delete') || type.includes('remove') || type.includes('hapus')) && isBill) {
       const prevLen = state.bills.length;
       if (id) {
         state.bills = state.bills.filter((b) => b.id !== id);
@@ -668,7 +687,7 @@ function executeAgentActions(actions) {
     }
 
     // 10. BAYAR / TOGGLE TAGIHAN
-    else if (type.includes('toggle') && (type.includes('bill') || type.includes('tagihan'))) {
+    else if ((type.includes('toggle') || type.includes('pay') || type.includes('bayar') || type.includes('lunas')) && isBill) {
       const item = state.bills.find((b) => (id && b.id === id) || (title && b.title.toLowerCase().includes(title.toLowerCase())));
       if (item) {
         item.paid = action.paid !== undefined ? Boolean(action.paid) : !item.paid;
@@ -677,8 +696,8 @@ function executeAgentActions(actions) {
     }
 
     // 11. NAVIGASI
-    else if (type.includes('nav') || route) {
-      let r = (route || '').toLowerCase();
+    else if (type.includes('nav') || type.includes('buka') || type.includes('pindah') || route) {
+      let r = (route || title || '').toLowerCase();
       if (r.includes('jadwal') || r.includes('schedule')) r = 'jadwal';
       else if (r.includes('habit') || r.includes('kebiasaan')) r = 'kebiasaan';
       else if (r.includes('bill') || r.includes('tagihan') || r.includes('ppob')) r = 'tagihan';
@@ -690,7 +709,7 @@ function executeAgentActions(actions) {
     }
 
     // 12. HAPUS DATA CONTOH
-    else if (type.includes('clear_sample') || type.includes('clear_example')) {
+    else if (type.includes('clear_sample') || type.includes('clear_example') || type.includes('clear')) {
       for (const key of ['agenda', 'habits', 'bills']) {
         state[key] = state[key].filter((e) => !e.sample);
       }
@@ -700,7 +719,6 @@ function executeAgentActions(actions) {
 
   if (executed.length) {
     save(executed.map((e) => e.label).join(' · '));
-    render();
   }
   return executed;
 }
@@ -920,23 +938,33 @@ let activeSpeechRec;
 let activeRecording;
 
 async function dictateTitle(trigger) {
+  const form = trigger.closest('form') || dialog.querySelector('form');
+  const status = form?.querySelector('.voice-status') || dialog.querySelector('.voice-status');
+  const input = form?.querySelector('.agent-input') || form?.querySelector('[name="title"]') || form?.elements?.title || dialog.querySelector('.agent-input');
+
+  const setMicState = (recording) => {
+    if (trigger.classList.contains('agent-mic-btn')) {
+      trigger.classList.toggle('is-recording', recording);
+      trigger.title = recording ? 'Stop dan kirim' : 'Rekam suara';
+    } else {
+      trigger.lastChild.textContent = recording ? 'Stop dan kirim' : 'Rekam suara';
+    }
+  };
+
   if (activeSpeechRec) {
-    activeSpeechRec.stop();
+    try { activeSpeechRec.stop(); } catch {}
     activeSpeechRec = undefined;
-    trigger.lastChild.textContent = 'Rekam suara';
+    setMicState(false);
     trigger.disabled = false;
     return;
   }
   if (activeRecording?.state === 'recording') {
-    activeRecording.stop();
+    try { activeRecording.stop(); } catch {}
+    setMicState(false);
     return;
   }
 
-  const form = trigger.form;
-  const status = form.querySelector('.voice-status');
-  const input = form.elements.title;
-
-  // 1. Coba Web Speech API bawaan browser (berjalan instan di Chrome, Edge, Safari di port 5500 maupun Vercel)
+  // 1. Coba Web Speech API bawaan browser
   const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (SpeechRec) {
     try {
@@ -946,9 +974,9 @@ async function dictateTitle(trigger) {
       recognition.interimResults = true;
 
       activeSpeechRec = recognition;
-      trigger.lastChild.textContent = 'Stop dan kirim';
+      setMicState(true);
       trigger.disabled = false;
-      status.textContent = 'Mendengarkan… Silakan bicara dalam bahasa Indonesia.';
+      if (status) status.textContent = 'Mendengarkan… Bicara sekarang.';
 
       let finalTranscript = '';
       recognition.onresult = (event) => {
@@ -962,54 +990,52 @@ async function dictateTitle(trigger) {
           }
         }
         const text = (finalTranscript + interim).trim();
-        if (text) {
-          input.value = text.slice(0, input.maxLength);
-          input.setCustomValidity('');
+        if (text && input) {
+          input.value = text.slice(0, input.maxLength || 1500);
+          input.setCustomValidity?.('');
         }
       };
 
       recognition.onerror = (event) => {
         activeSpeechRec = undefined;
-        trigger.lastChild.textContent = 'Rekam suara';
+        setMicState(false);
         trigger.disabled = false;
         if (event.error === 'not-allowed') {
-          status.textContent = 'Izin mikrofon ditolak. Izinkan mikrofon di browser.';
+          if (status) status.textContent = 'Izin mikrofon ditolak.';
         } else if (event.error === 'no-speech') {
-          status.textContent = 'Tidak ada suara terdeteksi. Silakan coba lagi.';
+          if (status) status.textContent = 'Tidak ada suara terdeteksi.';
         } else {
-          fallbackMediaRecorder(trigger, form, status, input);
+          fallbackMediaRecorder(trigger, form, status, input, setMicState);
         }
       };
 
       recognition.onend = () => {
         activeSpeechRec = undefined;
-        trigger.lastChild.textContent = 'Rekam suara';
+        setMicState(false);
         trigger.disabled = false;
-        const spoken = input.value.trim();
+        const spoken = (input?.value || '').trim();
         if (spoken) {
-          status.textContent = 'Dikte berhasil dimasukkan!';
-          if (dialog.querySelector('#dialog-title')?.textContent.includes('Gemini')) {
+          if (status) status.textContent = 'Suara diterima!';
+          if (dialog.open && dialog.classList.contains('agent-modal')) {
             sendAgentMessage(form);
           }
         } else {
-          status.textContent = 'Dikte selesai.';
+          if (status) status.textContent = '';
         }
       };
 
       recognition.start();
       return;
-    } catch {
-      // Jika SpeechRecognition gagal start, lanjut ke MediaRecorder
-    }
+    } catch {}
   }
 
   // 2. Fallback MediaRecorder + /api/transcribe
-  fallbackMediaRecorder(trigger, form, status, input);
+  fallbackMediaRecorder(trigger, form, status, input, setMicState);
 }
 
-async function fallbackMediaRecorder(trigger, form, status, input) {
+async function fallbackMediaRecorder(trigger, form, status, input, setMicState) {
   if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-    status.textContent = 'Perekaman mikrofon tidak didukung browser ini. Gunakan Google Chrome atau Safari.';
+    if (status) status.textContent = 'Mikrofon tidak didukung browser ini.';
     return;
   }
 
@@ -1021,6 +1047,7 @@ async function fallbackMediaRecorder(trigger, form, status, input) {
     clearTimeout(timeout);
     stream?.getTracks().forEach((track) => track.stop());
     if (activeRecording === recorder) activeRecording = undefined;
+    setMicState?.(false);
   };
   const cancel = () => {
     abort.abort();
@@ -1029,13 +1056,13 @@ async function fallbackMediaRecorder(trigger, form, status, input) {
   };
   dialog.addEventListener('close', cancel, { once: true });
   trigger.disabled = true;
-  status.textContent = 'Meminta akses mikrofon…';
+  if (status) status.textContent = 'Meminta akses mikrofon…';
 
   try {
     stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
-    if (abort.signal.aborted || !form.isConnected || !dialog.open) {
+    if (abort.signal.aborted || !dialog.open) {
       finish();
       return;
     }
@@ -1047,21 +1074,21 @@ async function fallbackMediaRecorder(trigger, form, status, input) {
     };
     recorder.onerror = () => {
       cancel();
-      status.textContent = 'Rekaman gagal. Coba lagi.';
+      if (status) status.textContent = 'Rekaman gagal. Coba lagi.';
       trigger.disabled = false;
-      trigger.lastChild.textContent = 'Rekam suara';
+      setMicState?.(false);
     };
     recorder.onstop = async () => {
       finish();
       if (abort.signal.aborted) return;
       trigger.disabled = true;
-      trigger.lastChild.textContent = 'Rekam suara';
-      status.textContent = 'Memproses suara…';
+      setMicState?.(false);
+      if (status) status.textContent = 'Memproses suara…';
       try {
-        if (!chunks.length) throw new Error('Tidak ada data audio yang terekam.');
+        if (!chunks.length) throw new Error('Tidak ada audio.');
         const { buffer: audio, isSilent } = await toWav(new Blob(chunks, { type: recorder.mimeType }));
         if (isSilent) {
-          status.textContent = 'Suara tidak tertangkap. Bicara lebih dekat ke mikrofon.';
+          if (status) status.textContent = 'Suara tidak tertangkap jelas.';
           return;
         }
         const response = await fetch('/api/transcribe', {
@@ -1070,21 +1097,23 @@ async function fallbackMediaRecorder(trigger, form, status, input) {
         if (response.ok) {
           const data = await response.json();
           const spoken = (data.transcript || '').trim();
-          if (spoken) {
-            input.value = spoken.slice(0, input.maxLength);
-            input.setCustomValidity('');
-            status.textContent = 'Suara berhasil ditranskripsikan!';
-            if (dialog.querySelector('#dialog-title')?.textContent.includes('Gemini')) {
+          if (spoken && input) {
+            input.value = spoken.slice(0, input.maxLength || 1500);
+            input.setCustomValidity?.('');
+            if (status) status.textContent = 'Suara diterima!';
+            if (dialog.open && dialog.classList.contains('agent-modal')) {
               sendAgentMessage(form);
             }
           } else {
-            status.textContent = 'Suara tidak tertangkap jelas. Coba bicara lebih dekat.';
+            if (status) status.textContent = 'Suara tidak tertangkap jelas.';
           }
         } else if (response.status === 405 || response.status === 404) {
-          input.value = 'Besok jam 2 siang review pesanan JStore';
-          input.setCustomValidity('');
-          status.textContent = 'Mode simulasi suara selesai.';
-          if (dialog.querySelector('#dialog-title')?.textContent.includes('Gemini')) {
+          if (input) {
+            input.value = 'Besok jam 2 siang review pesanan JStore';
+            input.setCustomValidity?.('');
+          }
+          if (status) status.textContent = 'Mode simulasi suara selesai.';
+          if (dialog.open && dialog.classList.contains('agent-modal')) {
             sendAgentMessage(form);
           }
         } else {
@@ -1092,26 +1121,27 @@ async function fallbackMediaRecorder(trigger, form, status, input) {
           throw new Error(data.error || `Transkripsi gagal (${response.status}).`);
         }
       } catch (error) {
-        if (!abort.signal.aborted) status.textContent = error.message || 'Transkripsi gagal. Coba lagi.';
+        if (!abort.signal.aborted && status) status.textContent = error.message || 'Transkripsi gagal.';
       } finally {
         trigger.disabled = false;
         dialog.removeEventListener('close', cancel);
       }
     };
     recorder.start(250);
-    trigger.lastChild.textContent = 'Stop dan kirim';
+    setMicState?.(true);
     trigger.disabled = false;
-    status.textContent = 'Sedang merekam. Bicara sekarang, lalu ketuk Stop dan kirim.';
+    if (status) status.textContent = 'Sedang merekam. Bicara lalu ketuk Stop.';
     timeout = setTimeout(() => {
       if (recorder.state === 'recording') recorder.stop();
     }, 12000);
   } catch (err) {
     finish();
     trigger.disabled = false;
-    if (err?.name === 'NotAllowedError') {
-      status.textContent = 'Akses mikrofon ditolak. Izinkan izin mikrofon di browser.';
-    } else {
-      status.textContent = err?.message || 'Mikrofon belum bisa digunakan.';
+    setMicState?.(false);
+    if (status) {
+      status.textContent = err?.name === 'NotAllowedError'
+        ? 'Akses mikrofon ditolak.'
+        : (err?.message || 'Mikrofon belum bisa digunakan.');
     }
     dialog.removeEventListener('close', cancel);
   }
@@ -1120,44 +1150,121 @@ async function fallbackMediaRecorder(trigger, form, status, input) {
 const agentMessages = [];
 let agentPending = false;
 
-function openAgent() {
-  const savedNotes = [...state.notes].reverse();
-  const log = agentMessages.length
-    ? agentMessages.map((message, index) => {
-        const draft = message.draft;
-        const preview = draft?.kind === 'agenda' ? [draft.date, draft.time].filter(Boolean).join(' · ') : draft?.note;
-        const actionsHtml = message.actions?.length
-          ? `<div class="agent-actions-list">${message.actions.map((act) => `<span class="agent-action-badge ${act.type?.includes('delete') ? 'danger' : ''}">${icon(act.type?.includes('delete') ? 'trash' : 'check')} ${safe(act.label)}</span>`).join('')}</div>`
-          : '';
-        return `<article class="agent-message ${message.role === 'user' ? 'is-user' : 'is-model'}">
-          <strong>${message.role === 'user' ? 'Kamu' : 'Gemini'}</strong>
-          <p>${safe(message.text).replace(/\n/g, '<br>')}</p>
-          ${actionsHtml}
-          ${draft ? `<div class="agent-draft">
-            <strong>${draft.kind === 'agenda' ? 'Jadwal' : 'Catatan'} · ${safe(draft.title)}</strong>
-            <p>${safe(preview)}</p>
-            ${message.saved ? '<small class="tag sage">Tersimpan</small>' : button('Simpan ke Jadwal', 'save-agent-draft', 'check', {id: index, variant: 'primary'})}
-          </div>` : ''}
-        </article>`;
-      }).join('')
-    : '<p class="empty" style="text-align: center; padding: 24px 0;">Mulai obrolan dengan Gemini! Sapa, minta buatkan atau hapus jadwal, centang kebiasaan, catat tagihan, atau navigasi halaman.</p>';
+function renderAgentMessages() {
+  if (!agentMessages.length) {
+    return `<div class="agent-welcome">
+      <div class="agent-welcome-icon">${icon('sparkles')}</div>
+      <h3 style="margin: 0 0 6px; font-size: 16px; font-weight: 700;">Halo! Saya Asisten AI Ritme</h3>
+      <p style="margin: 0; font-size: 12px; color: var(--muted); line-height: 1.5;">Ketik perintah apa saja atau gunakan tombol suara untuk mengelola jadwal, kebiasaan, dan tagihan:</p>
+      <div class="agent-suggestions">
+        <button type="button" class="agent-chip" data-agent-suggest="Tambah jadwal meeting besok jam 2 siang">📅 Jadwal besok jam 2 siang</button>
+        <button type="button" class="agent-chip" data-agent-suggest="Hapus jadwal meeting">🗑 Hapus jadwal meeting</button>
+        <button type="button" class="agent-chip" data-agent-suggest="Centang kebiasaan minum air">💧 Centang minum air</button>
+        <button type="button" class="agent-chip" data-agent-suggest="Buka halaman tagihan">💳 Buka tagihan & PPOB</button>
+      </div>
+    </div>`;
+  }
 
+  return agentMessages.map((message, index) => {
+    const draft = message.draft;
+    const preview = draft?.kind === 'agenda' ? [draft.date, draft.time].filter(Boolean).join(' · ') : draft?.note;
+    const actionsHtml = message.actions?.length
+      ? `<div class="agent-actions-list">${message.actions.map((act) => `<span class="agent-action-badge ${act.type?.includes('delete') ? 'danger' : ''}">${icon(act.type?.includes('delete') ? 'trash' : 'check')} ${safe(act.label)}</span>`).join('')}</div>`
+      : '';
+    return `<article class="agent-message ${message.role === 'user' ? 'is-user' : 'is-model'}">
+      <strong>${message.role === 'user' ? 'Kamu' : 'Gemini'}</strong>
+      <p>${safe(message.text).replace(/\n/g, '<br>')}</p>
+      ${actionsHtml}
+      ${draft ? `<div class="agent-draft">
+        <strong>${draft.kind === 'agenda' ? 'Jadwal' : 'Catatan'} · ${safe(draft.title)}</strong>
+        <p>${safe(preview)}</p>
+        ${message.saved ? '<small class="tag sage">Tersimpan</small>' : button('Simpan ke Jadwal', 'save-agent-draft', 'check', { id: index, variant: 'primary' })}
+      </div>` : ''}
+    </article>`;
+  }).join('');
+}
+
+function updateAgentView() {
+  if (!dialog.open || !dialog.classList.contains('agent-modal')) {
+    openAgent();
+    return;
+  }
+
+  const logEl = dialog.querySelector('.agent-log');
+  if (logEl) {
+    logEl.innerHTML = renderAgentMessages();
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  const statusEl = dialog.querySelector('.agent-status');
+  if (statusEl) {
+    statusEl.textContent = agentPending ? 'Gemini sedang memproses…' : '';
+  }
+  const sendBtn = dialog.querySelector('.agent-send-btn');
+  if (sendBtn) {
+    sendBtn.disabled = agentPending;
+  }
+  const notesSummary = dialog.querySelector('.agent-saved-notes summary');
+  if (notesSummary) {
+    notesSummary.textContent = `Catatan tersimpan (${state.notes.length})`;
+  }
+}
+
+function openAgent() {
+  submitDialog = sendAgentMessage;
+  dialog.className = 'agent-modal';
+
+  const savedNotes = [...state.notes].reverse();
   const notes = savedNotes.map((note) => `<article class="agent-message"><strong>${safe(note.title)}</strong><p>${safe(note.note)}</p></article>`).join('');
-  modal('Asisten Gemini', `
-    <div class="agent-log" aria-label="Percakapan" tabindex="0" style="max-height: 280px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px;">${log}</div>
-    ${field('Pesan', '<textarea name="title" rows="2" maxlength="1500" autofocus placeholder="Ketik pesan atau klik Rekam suara (Enter untuk kirim)…"></textarea>')}
-    <div class="voice-controls">${button('Rekam suara', 'dictate-title', 'mic')}<span class="voice-status" role="status"></span></div>
-    <p class="agent-status" role="status">${agentPending ? 'Gemini sedang mengetik…' : ''}</p>
-    <details style="margin-top: 10px;"><summary>Catatan tersimpan (${savedNotes.length})</summary>${notes || '<p>Belum ada catatan.</p>'}</details>`,
-    cancel() + submit('Kirim'), sendAgentMessage);
-  const agentLog = dialog.querySelector('.agent-log');
-  if (agentLog) agentLog.scrollTop = agentLog.scrollHeight;
-  const textarea = dialog.querySelector('textarea[name="title"]');
-  if (textarea) {
-    textarea.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
+
+  dialog.innerHTML = `
+    <form id="agent-modal-form" class="agent-chat-form">
+      <div class="dialog-head agent-modal-head">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span class="agent-head-badge">${icon('sparkles')}</span>
+          <h2 id="dialog-title" style="margin: 0; font-size: 17px; font-weight: 700;">Asisten Gemini</h2>
+        </div>
+        ${button('', 'close-modal', 'close', { variant: 'icon', title: 'Tutup' })}
+      </div>
+
+      <div class="agent-log" aria-label="Percakapan" tabindex="0">
+        ${renderAgentMessages()}
+      </div>
+
+      <div class="agent-bottom-bar">
+        <div class="agent-status-row">
+          <span class="voice-status" role="status"></span>
+          <span class="agent-status" role="status">${agentPending ? 'Gemini sedang memproses…' : ''}</span>
+        </div>
+        <div class="agent-input-row">
+          <button type="button" class="btn agent-mic-btn" data-action="dictate-title" title="Rekam suara" aria-label="Rekam suara">
+            ${icon('mic')}
+          </button>
+          <input type="text" name="title" class="agent-input" maxlength="1500" enterkeyhint="send" autocomplete="off" placeholder="Ketik perintah (contoh: hapus jadwal review)…">
+          <button type="submit" class="btn primary agent-send-btn" ${agentPending ? 'disabled' : ''}>
+            Kirim
+          </button>
+        </div>
+        <details class="agent-saved-notes">
+          <summary>Catatan tersimpan (${savedNotes.length})</summary>
+          <div class="agent-saved-notes-list">${notes || '<p style="padding: 6px 0; font-size: 12px; color: var(--muted);">Belum ada catatan.</p>'}</div>
+        </details>
+      </div>
+    </form>`;
+
+  if (!dialog.open) dialog.showModal();
+
+  const logEl = dialog.querySelector('.agent-log');
+  if (logEl) logEl.scrollTop = logEl.scrollHeight;
+
+  const input = dialog.querySelector('.agent-input');
+  if (input) {
+    if (window.innerWidth > 650) {
+      input.focus({ preventScroll: true });
+    }
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
         e.preventDefault();
-        dialog.querySelector('form')?.requestSubmit();
+        sendAgentMessage(input.closest('form'));
       }
     });
   }
@@ -1165,25 +1272,19 @@ function openAgent() {
 
 async function sendAgentMessage(form) {
   if (agentPending) return;
-  const input = form?.elements?.title || dialog.querySelector('textarea[name="title"]');
+  const input = form?.querySelector('.agent-input') || form?.querySelector('[name="title"]') || dialog.querySelector('.agent-input');
   const text = (input?.value || '').trim();
   if (!text) {
     const status = dialog.querySelector('.agent-status');
-    if (status) status.textContent = 'Ketik pesan atau rekam suara terlebih dahulu.';
-    input?.focus();
+    if (status) status.textContent = 'Ketik perintah atau rekam suara terlebih dahulu.';
     return;
   }
 
   // Masukkan pesan user seketika ke riwayat obrolan
   agentMessages.push({ role: 'user', text });
-  input.value = '';
+  if (input) input.value = '';
   agentPending = true;
-  openAgent();
-
-  const status = dialog.querySelector('.agent-status');
-  const send = dialog.querySelector('[type="submit"]');
-  if (send) send.disabled = true;
-  if (status) status.textContent = 'Gemini sedang mengetik…';
+  updateAgentView();
 
   const messages = agentMessages.slice(-10).map(({ role, text }) => ({ role, text }));
   const contextState = {
@@ -1230,13 +1331,13 @@ async function sendAgentMessage(form) {
       }
     }
 
-    if (!replyText) replyText = 'Baik, pesanmu sudah saya terima!';
+    if (!replyText) replyText = 'Baik, perintahmu sudah saya proses!';
     agentMessages.push({ role: 'model', text: replyText, draft, actions: executed });
   } catch (error) {
     agentMessages.push({ role: 'model', text: `Maaf, terjadi kendala: ${error.message}` });
   } finally {
     agentPending = false;
-    if (dialog.open) openAgent();
+    updateAgentView();
   }
 }
 
@@ -1253,7 +1354,7 @@ function saveAgentDraft(id) {
   }
   message.saved = true;
   save(draft.kind === 'agenda' ? 'Jadwal disimpan.' : 'Catatan disimpan.');
-  openAgent();
+  updateAgentView();
 }
 
 function editItem(key, id, defaultDate) {
@@ -1364,6 +1465,17 @@ function updateHabitDate(delta, focus) {
 }
 
 document.addEventListener('click', (event) => {
+  const chip = event.target.closest('[data-agent-suggest]');
+  if (chip) {
+    const text = chip.dataset.agentSuggest;
+    const input = dialog.querySelector('.agent-input');
+    if (input) {
+      input.value = text;
+      sendAgentMessage(input.closest('form'));
+    }
+    return;
+  }
+
   const target = event.target.closest('[data-action]');
   if (!target) return;
   const { action, id, date, focus } = target.dataset;
@@ -1444,12 +1556,23 @@ dialog.addEventListener('input', (event) => event.target.setCustomValidity(''));
 dialog.addEventListener('close', () => {
   submitDialog = undefined;
   currentSimulation = undefined;
+  dialog.className = '';
+  if (activeSpeechRec) {
+    try { activeSpeechRec.stop(); } catch {}
+    activeSpeechRec = undefined;
+  }
+  if (activeRecording?.state === 'recording') {
+    try { activeRecording.stop(); } catch {}
+    activeRecording = undefined;
+  }
 });
 
 window.addEventListener('hashchange', () => {
   render();
-  window.scrollTo(0, 0);
-  content.focus({ preventScroll: true });
+  if (!dialog.open) {
+    window.scrollTo(0, 0);
+    content.focus({ preventScroll: true });
+  }
 });
 
 window.addEventListener('storage', (event) => {
