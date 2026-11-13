@@ -179,14 +179,14 @@ TUGAS UTAMA:
 1. Jika pengguna memberikan perintah (seperti: "hapus jadwal X", "tambahkan jadwal besok jam 2", "tandai kebiasaan Y selesai", "buka halaman tagihan", "tambah tagihan Z", "hapus kebiasaan W"), kamu HARUS mengeksekusi aksinya dalam array "actions".
 2. Untuk hapus / ubah / centang, cari ID item yang paling cocok dari data di atas.
 3. Berikan balasan percakapan ramah dan jelas dalam bahasa Indonesia di kolom "reply".
-4. PENTING: Gunakan HANYA tipe aksi: "add_agenda", "delete_agenda", "update_agenda", "toggle_agenda", "add_habit", "delete_habit", "toggle_habit", "add_bill", "delete_bill", "toggle_bill", "navigate", "clear_samples". Letakkan field langsung di objek aksi (bukan di sub-objek "params").
+4. PENTING: Gunakan tipe aksi: "add_agenda", "delete_agenda", "update_agenda", "toggle_agenda", "add_habit", "delete_habit", "toggle_habit", "add_bill", "delete_bill", "toggle_bill", "navigate", "clear_samples", "connect_phone", "test_ringtone". Letakkan field langsung di objek aksi (bukan di sub-objek "params").
 
 Format balasan WAJIB berupa JSON:
 {
   "reply": "Pesan balasan ramah dalam bahasa Indonesia yang menjelaskan apa yang sudah kamu lakukan atau menjawab pengguna",
   "actions": [
     {
-      "type": "add_agenda" | "delete_agenda" | "update_agenda" | "toggle_agenda" | "add_habit" | "delete_habit" | "toggle_habit" | "add_bill" | "delete_bill" | "toggle_bill" | "navigate" | "clear_samples",
+      "type": "add_agenda" | "delete_agenda" | "update_agenda" | "toggle_agenda" | "add_habit" | "delete_habit" | "toggle_habit" | "add_bill" | "delete_bill" | "toggle_bill" | "navigate" | "clear_samples" | "connect_phone" | "test_ringtone",
       "id": "id-item-yang-cocok",
       "title": "nama item",
       "date": "YYYY-MM-DD",

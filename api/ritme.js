@@ -17,6 +17,18 @@ const assets = {
     'text/css; charset=utf-8',
     await readFile(new URL('../web/style.css', import.meta.url), 'utf8'),
   ],
+  '/manifest.webmanifest': [
+    'application/manifest+json; charset=utf-8',
+    await readFile(new URL('../web/manifest.webmanifest', import.meta.url), 'utf8'),
+  ],
+  '/sw.js': [
+    'text/javascript; charset=utf-8',
+    await readFile(new URL('../web/sw.js', import.meta.url), 'utf8'),
+  ],
+  '/icon.svg': [
+    'image/svg+xml; charset=utf-8',
+    await readFile(new URL('../web/icon.svg', import.meta.url), 'utf8'),
+  ],
 };
 
 const viewPaths = new Map([
@@ -24,6 +36,9 @@ const viewPaths = new Map([
   ['index', '/'],
   ['script', '/app.js'],
   ['style', '/style.css'],
+  ['manifest', '/manifest.webmanifest'],
+  ['sw', '/sw.js'],
+  ['icon', '/icon.svg'],
   ['chat', '/api/chat'],
   ['transcribe', '/api/transcribe'],
 ]);

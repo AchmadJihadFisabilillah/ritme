@@ -48,6 +48,24 @@ class RitmeHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             with open(WEB_DIR / 'style.css', 'rb') as f:
                 self.wfile.write(f.read())
+        elif p == '/manifest.webmanifest':
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/manifest+json; charset=utf-8')
+            self.end_headers()
+            with open(WEB_DIR / 'manifest.webmanifest', 'rb') as f:
+                self.wfile.write(f.read())
+        elif p == '/sw.js':
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/javascript; charset=utf-8')
+            self.end_headers()
+            with open(WEB_DIR / 'sw.js', 'rb') as f:
+                self.wfile.write(f.read())
+        elif p == '/icon.svg':
+            self.send_response(200)
+            self.send_header('Content-Type', 'image/svg+xml; charset=utf-8')
+            self.end_headers()
+            with open(WEB_DIR / 'icon.svg', 'rb') as f:
+                self.wfile.write(f.read())
         else:
             self.send_response(404)
             self.send_header('Content-Type', 'application/json')

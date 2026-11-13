@@ -206,17 +206,391 @@ function notificationCount() {
   return pendingAgenda + pendingHabits + bills;
 }
 
+/* ==================== NADA DERING & ALARM HP ==================== */
+let alarmAudioCtx = null;
+let alarmInterval = null;
+let activeAlarmAgenda = null;
+const firedAlarms = new Set();
+
+function unlockAudio() {
+  if (!alarmAudioCtx) {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (AudioCtx) alarmAudioCtx = new AudioCtx();
+  }
+  if (alarmAudioCtx && alarmAudioCtx.state === 'suspended') {
+    alarmAudioCtx.resume().catch(() => {});
+  }
+}
+['click', 'touchstart', 'keydown'].forEach((ev) => {
+  document.addEventListener(ev, unlockAudio, { passive: true });
+});
+
+function playMelodicAlarmCycle() {
+  unlockAudio();
+  if (!alarmAudioCtx) return;
+  const ctx = alarmAudioCtx;
+  const now = ctx.currentTime;
+
+  // Rangkaian not melodi lonceng merdu & ceria (E5, G#5, B5, E6)
+  const sequence = [
+    { freq: 659.25, time: 0.00, dur: 0.22, vol: 0.30 },
+    { freq: 830.61, time: 0.14, dur: 0.22, vol: 0.32 },
+    { freq: 987.77, time: 0.28, dur: 0.22, vol: 0.34 },
+    { freq: 1318.51, time: 0.42, dur: 0.45, vol: 0.36 },
+    // Bell chord penutup yang berdenting elegan
+    { freq: 659.25, time: 0.70, dur: 0.75, vol: 0.22 },
+    { freq: 987.77, time: 0.70, dur: 0.75, vol: 0.25 },
+    { freq: 1318.51, time: 0.70, dur: 0.85, vol: 0.28 },
+  ];
+
+  sequence.forEach(({ freq, time, dur, vol }) => {
+    try {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, now + time);
+
+      gain.gain.setValueAtTime(0, now + time);
+      gain.gain.linearRampToValueAtTime(vol, now + time + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + time + dur);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(now + time);
+      osc.stop(now + time + dur);
+    } catch {}
+  });
+
+  if ('vibrate' in navigator) {
+    try { navigator.vibrate([250, 100, 250, 100, 450]); } catch {}
+  }
+}
+
+function startAlarm(item) {
+  stopAlarm();
+  activeAlarmAgenda = item;
+
+  playMelodicAlarmCycle();
+
+  alarmInterval = setInterval(() => {
+    if (!activeAlarmAgenda) return;
+    playMelodicAlarmCycle();
+  }, 2000);
+
+  renderAlarmBanner(item);
+
+  sendSystemNotification(
+    `⏰ Waktunya: ${item.title}`,
+    `Pukul ${item.time || 'sekarang'} WIB - Ritme Planner`
+  );
+
+  setTimeout(() => {
+    if (activeAlarmAgenda?.id === item.id) {
+      stopAlarm();
+    }
+  }, 60000);
+}
+
+function stopAlarm() {
+  activeAlarmAgenda = null;
+  if (alarmInterval) {
+    clearInterval(alarmInterval);
+    alarmInterval = null;
+  }
+  if ('vibrate' in navigator) {
+    try { navigator.vibrate(0); } catch {}
+  }
+  const banner = document.querySelector('#alarm-banner');
+  if (banner) banner.remove();
+}
+
+function testAlarmRingtone() {
+  playMelodicAlarmCycle();
+  showToast('Memutar sampel nada dering & getaran alarm…');
+}
+
+function renderAlarmBanner(item) {
+  let banner = document.querySelector('#alarm-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'alarm-banner';
+    banner.className = 'alarm-banner';
+    document.body.appendChild(banner);
+  }
+
+  banner.innerHTML = `
+    <div class="alarm-banner-inner">
+      <div class="alarm-bell-icon" aria-hidden="true">${icon('bell')}</div>
+      <div class="alarm-info">
+        <span class="alarm-tag">⏰ Waktunya Jadwal!</span>
+        <strong class="alarm-title">${safe(item.title)}</strong>
+        <span class="alarm-time">Pukul ${safe(item.time || '–')} WIB</span>
+      </div>
+      <div class="alarm-btn-group">
+        <button type="button" class="btn primary" data-action="dismiss-alarm">Matikan Dering</button>
+        <button type="button" class="btn" data-action="finish-alarm" data-id="${safe(item.id)}">${icon('check')} Selesai</button>
+        <button type="button" class="btn ghost" data-action="snooze-alarm" data-id="${safe(item.id)}">Tunda 5 Mnt</button>
+      </div>
+    </div>
+  `;
+}
+
+function finishAlarm(id) {
+  const item = state.agenda.find((a) => a.id === id);
+  if (item) {
+    item.done = true;
+    save('Jadwal ditandai selesai.');
+  }
+  stopAlarm();
+}
+
+function snoozeAlarm(id) {
+  const item = state.agenda.find((a) => a.id === id);
+  if (item) {
+    const now = new Date();
+    now.setMinutes(now.getMinutes() + 5);
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    item.time = `${hh}:${mm}`;
+    save(`Alarm "${item.title}" ditunda 5 menit ke pukul ${item.time}.`);
+  }
+  stopAlarm();
+}
+
+function checkAgendaAlarms() {
+  const now = new Date();
+  const currentYMD = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const currentHHMM = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+  if (today !== currentYMD) {
+    today = currentYMD;
+    render();
+  }
+
+  if (!state.agenda || !Array.isArray(state.agenda)) return;
+
+  state.agenda.forEach((item) => {
+    if (item.done) return;
+    if (item.date !== currentYMD) return;
+    if (!item.time) return;
+
+    const itemTime = item.time.slice(0, 5);
+    if (itemTime === currentHHMM) {
+      const alarmKey = `${item.id}-${item.date}-${itemTime}`;
+      if (!firedAlarms.has(alarmKey)) {
+        firedAlarms.add(alarmKey);
+        startAlarm(item);
+      }
+    }
+  });
+}
+
+async function requestNotificationPermission() {
+  if (!('Notification' in window)) {
+    showToast('Browser ini tidak mendukung Web Notifications.');
+    return false;
+  }
+  if (Notification.permission === 'granted') {
+    showToast('Notifikasi HP sudah aktif!');
+    return true;
+  }
+  try {
+    const result = await Notification.requestPermission();
+    if (result === 'granted') {
+      showToast('Izin notifikasi & alarm berhasil diaktifkan di HP!');
+      render();
+      if (dialog.open) openConnectPhone();
+      return true;
+    } else {
+      showToast('Izin notifikasi belum diizinkan di browser.');
+      return false;
+    }
+  } catch {
+    return false;
+  }
+}
+
+function sendSystemNotification(title, body) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  try {
+    if (navigator.serviceWorker?.controller) {
+      navigator.serviceWorker.ready.then((reg) => {
+        reg.showNotification(title, {
+          body,
+          icon: '/icon.svg',
+          badge: '/icon.svg',
+          vibrate: [250, 100, 250, 100, 450],
+          tag: 'ritme-alarm',
+          renotify: true,
+        });
+      }).catch(() => {
+        new Notification(title, { body, icon: '/icon.svg' });
+      });
+    } else {
+      new Notification(title, { body, icon: '/icon.svg' });
+    }
+  } catch {}
+}
+
+function copySyncLink(btn) {
+  const url = btn.dataset.url;
+  if (!url) return;
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(url).then(() => {
+      showToast('Link sinkronisasi disalin! Buka link ini di HP kamu.');
+    }).catch(() => {
+      prompt('Salin link ini untuk dibuka di HP:', url);
+    });
+  } else {
+    prompt('Salin link ini untuk dibuka di HP:', url);
+  }
+}
+
+function exportStateJson() {
+  const jsonStr = JSON.stringify(state, null, 2);
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(jsonStr).then(() => {
+      showToast('Data jadwal berhasil disalin ke clipboard!');
+    }).catch(() => {
+      prompt('Salin data ini:', jsonStr);
+    });
+  } else {
+    prompt('Salin data ini:', jsonStr);
+  }
+}
+
+function openConnectPhone() {
+  let syncPayload = '';
+  try {
+    syncPayload = encodeURIComponent(btoa(unescape(encodeURIComponent(JSON.stringify(state)))));
+  } catch {}
+  const syncUrl = `${window.location.origin}/#sync=${syncPayload}`;
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&format=svg&data=${encodeURIComponent(syncUrl)}`;
+  const notifGranted = ('Notification' in window) && Notification.permission === 'granted';
+
+  const body = `
+    <div class="connect-phone-container">
+      <div class="connect-card">
+        <div class="connect-card-head">
+          <span class="connect-step">1</span>
+          <div>
+            <h3 style="font-size:15px;font-weight:700;margin:0 0 2px;">Buka di HP & Sinkronkan Jadwal</h3>
+            <p style="font-size:12px;color:var(--muted);margin:0;">Scan QR code berikut langsung pakai kamera HP atau salin linknya:</p>
+          </div>
+        </div>
+
+        <div class="qr-wrapper">
+          <div class="qr-code-box">
+            <img src="${qrUrl}" alt="QR Code Sinkronisasi HP" width="180" height="180" loading="lazy" onerror="this.parentElement.innerHTML='<p style=color:var(--muted);font-size:12px;text-align:center;padding:10px;>Gunakan tombol Salin Link di bawah untuk membuka di HP</p>'">
+          </div>
+          <div class="qr-actions">
+            <button type="button" class="btn primary" data-action="copy-sync-link" data-url="${safe(syncUrl)}">${icon('arrow')} Salin Link Sinkronisasi</button>
+            <button type="button" class="btn" data-action="export-state-json">${icon('bag')} Salin Data JSON</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="connect-card">
+        <div class="connect-card-head">
+          <span class="connect-step">2</span>
+          <div>
+            <h3 style="font-size:15px;font-weight:700;margin:0 0 2px;">Pasang di HP (Aplikasi Mandiri / PWA)</h3>
+            <p style="font-size:12px;color:var(--muted);margin:0;">Jadikan Ritme aplikasi di layar utama HP (tanpa address bar, cepat & offline):</p>
+          </div>
+        </div>
+        <div class="pwa-steps">
+          <div class="pwa-device-box">
+            <strong>🤖 Android (Google Chrome):</strong>
+            <ol>
+              <li>Buka link Ritme di browser Chrome HP.</li>
+              <li>Ketuk ikon titik tiga (<strong>⋮</strong>) di kanan atas.</li>
+              <li>Pilih <strong>"Instal aplikasi"</strong> atau <strong>"Tambahkan ke Layar Utama"</strong>.</li>
+            </ol>
+          </div>
+          <div class="pwa-device-box">
+            <strong>🍎 iPhone (Apple Safari):</strong>
+            <ol>
+              <li>Buka link Ritme di Safari iPhone.</li>
+              <li>Ketuk tombol <strong>Bagikan / Share</strong> (ikon kotak panah ke atas di bawah).</li>
+              <li>Pilih <strong>"Tambah ke Layar Utama" (Add to Home Screen)</strong>.</li>
+            </ol>
+          </div>
+        </div>
+      </div>
+
+      <div class="connect-card">
+        <div class="connect-card-head">
+          <span class="connect-step">3</span>
+          <div>
+            <h3 style="font-size:15px;font-weight:700;margin:0 0 2px;">Nada Dering & Notifikasi Alarm HP</h3>
+            <p style="font-size:12px;color:var(--muted);margin:0;">Aktifkan nada dering merdu dan getaran tiap waktu jadwal tiba:</p>
+          </div>
+        </div>
+        <div class="alarm-settings-row">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span class="alarm-status-pill ${notifGranted ? 'active' : ''}">${notifGranted ? '✓ Izin Notifikasi Aktif' : 'Belum Diizinkan'}</span>
+            ${!notifGranted ? button('Aktifkan Izin Notifikasi', 'request-notifications', 'bell', { variant: 'primary' }) : ''}
+          </div>
+          ${button('Uji Nada Dering & Getar', 'test-ringtone', 'bell')}
+        </div>
+      </div>
+    </div>
+  `;
+
+  modal('Hubungkan ke HP & Nada Dering', body, cancel());
+}
+
+function checkSyncHash() {
+  if (location.hash && location.hash.startsWith('#sync=')) {
+    const raw = location.hash.slice(6);
+    try {
+      const decoded = decodeURIComponent(escape(atob(decodeURIComponent(raw))));
+      const incoming = JSON.parse(decoded);
+      if (incoming && Array.isArray(incoming.agenda)) {
+        setTimeout(() => {
+          if (confirm('Ditemukan data jadwal & aktivitas dari perangkat lain. Terapkan data ini ke HP sekarang?')) {
+            state = { ...state, ...incoming };
+            save('Data berhasil disinkronkan ke HP!');
+            history.replaceState(null, '', '#ringkasan');
+          }
+        }, 300);
+      }
+    } catch (e) {
+      console.error('Gagal membaca data sync:', e);
+    }
+  }
+}
+
 function openNotifications() {
   const pendingAgenda = agendaFor(today).filter((item) => !item.done);
   const pendingHabits = state.habits.filter((item) => !item.days.includes(today));
   const bills = dueSoon();
   const total = pendingAgenda.length + pendingHabits.length + bills.length;
+  const notifGranted = ('Notification' in window) && Notification.permission === 'granted';
+
+  const alarmBar = `
+    <div style="background:var(--surface-raised);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span style="color:var(--accent);">${icon('bell')}</span>
+        <div>
+          <strong style="font-size:13px;display:block;">Nada Dering & Alarm HP</strong>
+          <small style="color:var(--muted);font-size:11px;">${notifGranted ? '✓ Izin notifikasi HP aktif' : 'Ketuk uji dering atau hubungkan ke HP'}</small>
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        ${button('Uji Dering', 'test-ringtone', 'bell')}
+        ${button('Hubungkan ke HP', 'connect-phone', 'phone', { variant: 'primary' })}
+      </div>
+    </div>
+  `;
 
   let body = '';
   if (!total) {
-    body = '<p class="empty" style="text-align:center;padding:24px 0;">🎉 Semua agenda dan kebiasaan hari ini sudah tuntas, dan tidak ada tagihan jatuh tempo dalam 7 hari ke depan.</p>';
+    body = alarmBar + '<p class="empty" style="text-align:center;padding:24px 0;">🎉 Semua agenda dan kebiasaan hari ini sudah tuntas, dan tidak ada tagihan jatuh tempo dalam 7 hari ke depan.</p>';
   } else {
     body = `
+      ${alarmBar}
       <div style="display:grid;gap:18px;">
         ${pendingAgenda.length ? `
           <div>
@@ -307,6 +681,7 @@ function shell(route) {
     <nav class="navigation" aria-label="Navigasi utama">
       <p class="nav-label">Menu</p>
       ${Object.entries(routes).map(([slug, item]) => `<a class="nav-link" href="#${slug}"${slug === route ? ' aria-current="page"' : ''}>${icon(item.icon)}<span>${item.label}</span></a>`).join('')}
+      <button type="button" class="nav-link" data-action="connect-phone" style="width:100%;text-align:left;background:none;border:none;color:var(--muted);">${icon('phone')}<span>Hubungkan ke HP</span></button>
     </nav>
     <div class="side-bottom">
       <p class="storage-note">${icon('lock')} <span>Tersimpan di browser ini</span></p>
@@ -315,7 +690,8 @@ function shell(route) {
   document.querySelector('#topbar').innerHTML = `
     <span class="topbar-title"><span class="brand-mark">${brandArt}</span>${routes[route].label}</span>
     <div class="topbar-actions">
-      ${button('Asisten Gemini', 'open-agent', 'mic', {variant: 'agent-cta', focus: 'open-agent'})}
+      ${button('Hubungkan ke HP', 'connect-phone', 'phone', { variant: 'connect-hp-btn', title: 'Hubungkan ke HP & Nada Dering' })}
+      ${button('Asisten Gemini', 'open-agent', 'mic', { variant: 'agent-cta', focus: 'open-agent' })}
       <a class="btn" href="#jadwal" data-action="today-link">${icon('calendar')} ${shortDate.format(asDate(today))}</a>
       <button type="button" class="btn icon" data-action="open-notifications" data-focus="open-notifications" aria-label="Pemberitahuan & Pengingat" title="Pemberitahuan & Pengingat">${icon('bell')}${notificationCount() ? '<span class="dot"></span>' : ''}</button>
     </div>`;
@@ -705,6 +1081,18 @@ function executeAgentActions(actions) {
       }
       executed.push({ type: 'delete', label: 'Data contoh dibersihkan' });
     }
+
+    // 13. HUBUNGKAN KE HP
+    else if (type.includes('connect') || type.includes('phone') || type.includes('hp')) {
+      setTimeout(openConnectPhone, 400);
+      executed.push({ type: 'connect', label: 'Membuka menu Hubungkan ke HP' });
+    }
+
+    // 14. TES NADA DERING
+    else if (type.includes('ringtone') || type.includes('alarm') || type.includes('dering')) {
+      testAlarmRingtone();
+      executed.push({ type: 'sound', label: 'Memutar sampel nada dering alarm' });
+    }
   }
 
   if (executed.length) {
@@ -886,7 +1274,21 @@ function localAssistantReply(text) {
 
   if (isGreeting) {
     return {
-      reply: 'Halo! Saya asisten Ritme. Kamu bisa minta saya tambah/hapus jadwal, centang kebiasaan, catat tagihan, atau navigasi halaman.',
+      reply: 'Halo! Saya asisten Ritme. Kamu bisa minta saya tambah/hapus jadwal, bunyikan nada dering alarm, hubungkan ke HP, centang kebiasaan, catat tagihan, atau navigasi halaman.',
+      actions: [],
+    };
+  }
+  if (lower.includes('nada dering') || lower.includes('tes dering') || lower.includes('bunyikan alarm') || lower.includes('uji suara')) {
+    testAlarmRingtone();
+    return {
+      reply: 'Memutar sampel nada dering alarm jadwal! Nada dering merdu ini otomatis berbunyi dan menggetarkan HP tiap waktu jadwalmu tiba.',
+      actions: [],
+    };
+  }
+  if (lower.includes('connect ke hp') || lower.includes('hubungkan ke hp') || lower.includes('buka di hp') || lower.includes('sambungkan hp') || lower.includes('sinkron')) {
+    setTimeout(openConnectPhone, 400);
+    return {
+      reply: 'Membuka menu Hubungkan ke HP. Kamu bisa scan QR code atau salin link untuk membuka jadwalmu di HP, lengkap dengan instalasi PWA dan nada dering alarm.',
       actions: [],
     };
   }
@@ -1502,6 +1904,14 @@ document.addEventListener('click', (event) => {
   if (!target) return;
   const { action, id, date, focus } = target.dataset;
   switch (action) {
+    case 'connect-phone': openConnectPhone(); break;
+    case 'test-ringtone': testAlarmRingtone(); break;
+    case 'request-notifications': requestNotificationPermission(); break;
+    case 'dismiss-alarm': stopAlarm(); break;
+    case 'finish-alarm': finishAlarm(id); break;
+    case 'snooze-alarm': snoozeAlarm(id); break;
+    case 'copy-sync-link': copySyncLink(target); break;
+    case 'export-state-json': exportStateJson(); break;
     case 'open-notifications': openNotifications(); break;
     case 'open-agent': openAgent(); break;
     case 'save-agent-draft': saveAgentDraft(id); break;
@@ -1611,8 +2021,21 @@ function refreshToday() {
 }
 
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) refreshToday();
+  if (!document.hidden) {
+    refreshToday();
+    checkAgendaAlarms();
+  }
 });
 
 setInterval(refreshToday, 30000);
+setInterval(checkAgendaAlarms, 8000);
+
+if ('serviceWorker' in navigator && window.isSecureContext) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
+}
+
+checkSyncHash();
+checkAgendaAlarms();
 render();

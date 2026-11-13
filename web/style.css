@@ -569,3 +569,190 @@ textarea { width: 100%; border: 1px solid var(--line); background: var(--paper);
 @media (max-width: 385px) {
   .topbar { flex-wrap: wrap; gap: 6px; padding-block: 8px; }
 }
+
+/* ==================== ALARM NADA DERING & CONNECT HP ==================== */
+.alarm-banner {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: calc(100% - 32px);
+  max-width: 580px;
+  background: var(--surface-raised);
+  border: 2px solid var(--accent);
+  box-shadow: 0 12px 40px rgba(35, 96, 189, 0.45);
+  border-radius: 14px;
+  padding: 14px 18px;
+  z-index: 99999;
+  animation: slide-in-alarm 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes slide-in-alarm {
+  from { opacity: 0; transform: translate(-50%, -20px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+.alarm-banner-inner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.alarm-bell-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(35, 96, 189, 0.3);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  animation: bell-ring 1.3s infinite ease-in-out;
+}
+.alarm-bell-icon svg {
+  width: 24px;
+  height: 24px;
+}
+@keyframes bell-ring {
+  0%, 100% { transform: rotate(0); }
+  15% { transform: rotate(18deg); }
+  30% { transform: rotate(-18deg); }
+  45% { transform: rotate(14deg); }
+  60% { transform: rotate(-14deg); }
+  75% { transform: rotate(6deg); }
+  90% { transform: rotate(-6deg); }
+}
+.alarm-info {
+  flex: 1 1 200px;
+}
+.alarm-tag {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  margin-bottom: 2px;
+}
+.alarm-title {
+  display: block;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.3;
+}
+.alarm-time {
+  font-size: 12px;
+  color: var(--muted);
+}
+.alarm-btn-group {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.connect-hp-btn {
+  background: rgba(154, 195, 255, 0.1);
+  border: 1px solid rgba(154, 195, 255, 0.25);
+  color: var(--accent);
+  font-weight: 600;
+}
+.connect-hp-btn:hover {
+  background: rgba(154, 195, 255, 0.2);
+}
+
+.connect-phone-container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.connect-card {
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px;
+}
+.connect-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.connect-step {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.qr-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  margin-top: 10px;
+}
+.qr-code-box {
+  background: #ffffff;
+  padding: 12px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+.qr-code-box img {
+  display: block;
+}
+.qr-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.pwa-steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.pwa-device-box {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+}
+.pwa-device-box ol {
+  margin: 8px 0 0 16px;
+  padding: 0;
+}
+.alarm-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  background: var(--paper);
+  padding: 12px;
+  border-radius: 8px;
+}
+.alarm-status-pill {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+.alarm-status-pill.active {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border-color: rgba(16, 185, 129, 0.3);
+}

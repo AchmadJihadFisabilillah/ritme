@@ -13,6 +13,9 @@
     { "source": "/index.html", "destination": "/api/ritme?view=home" },
     { "source": "/app.js", "destination": "/api/ritme?view=script" },
     { "source": "/style.css", "destination": "/api/ritme?view=style" },
+    { "source": "/manifest.webmanifest", "destination": "/api/ritme?view=manifest" },
+    { "source": "/sw.js", "destination": "/api/ritme?view=sw" },
+    { "source": "/icon.svg", "destination": "/api/ritme?view=icon" },
     { "source": "/api/chat", "destination": "/api/ritme?view=chat" },
     { "source": "/api/transcribe", "destination": "/api/ritme?view=transcribe" }
   ]
