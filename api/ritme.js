@@ -40,7 +40,7 @@ export default {
 
       return await handleRitme(request, process.env, pathname);
     } catch {
-      return new Response('Terjadi kesalahan internal pada server.', {
+      return Response.json({ error: 'Terjadi kesalahan internal pada server.' }, {
         status: 500,
         headers: { 'Cache-Control': 'no-store' },
       });

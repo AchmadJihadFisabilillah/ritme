@@ -21,41 +21,75 @@ async function transcribe(request, env) {
 
   const reader = request.body?.getReader();
   if (!reader) return json({ error: 'Rekaman kosong.' }, 400);
-  let binary = '';
+  const chunks = [];
+  let totalLength = 0;
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    if (binary.length + value.length > audioLimit) {
+    totalLength += value.length;
+    if (totalLength > audioLimit) {
       await reader.cancel();
       return json({ error: 'Rekaman terlalu panjang.' }, 413);
     }
-    for (let i = 0; i < value.length; i += 8192) {
-      binary += String.fromCharCode(...value.subarray(i, i + 8192));
-    }
+    chunks.push(value);
   }
-  if (binary.length <= 44 || !binary.startsWith('RIFF') || binary.slice(8, 12) !== 'WAVE') {
+  if (totalLength <= 44) return json({ error: 'Rekaman kosong atau tidak valid.' }, 400);
+
+  const combined = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  const header = String.fromCharCode(...combined.subarray(0, 12));
+  if (!header.startsWith('RIFF') || header.slice(8, 12) !== 'WAVE') {
     return json({ error: 'Rekaman kosong atau tidak valid.' }, 400);
   }
 
+  let base64Audio;
+  if (typeof Buffer !== 'undefined') {
+    base64Audio = Buffer.from(combined.buffer, combined.byteOffset, combined.byteLength).toString('base64');
+  } else {
+    let binary = '';
+    for (let i = 0; i < combined.length; i += 8192) {
+      binary += String.fromCharCode(...combined.subarray(i, i + 8192));
+    }
+    base64Audio = btoa(binary);
+  }
+
   try {
-    const result = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-transcribe:generateContent', {
+    const promptText = 'Transkripsikan rekaman audio berikut secara tepat dan lengkap sesuai kata yang diucapkan penutur dalam bahasa Indonesia. Kembalikan HANYA teks ucapan tanpa tanda kutip, tanpa penjelasan, dan tanpa komentar apa pun.';
+    const requestBody = JSON.stringify({
+      contents: [{ parts: [
+        { text: promptText },
+        { inlineData: { mimeType: 'audio/wav', data: base64Audio } },
+      ] }],
+    });
+
+    let result = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
       signal: AbortSignal.timeout(25000),
-      body: JSON.stringify({
-        contents: [{ parts: [
-          { text: 'Transcribe the speech verbatim in its original language (usually Indonesian). Return only the words spoken, without timestamps, speaker labels, or commentary. If silent, return an empty response.' },
-          { inlineData: { mimeType: 'audio/wav', data: btoa(binary) } },
-        ] }],
-      }),
+      body: requestBody,
     });
+
+    if (!result.ok && result.status !== 429) {
+      result = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-transcribe:generateContent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
+        signal: AbortSignal.timeout(25000),
+        body: requestBody,
+      });
+    }
+
     if (result.status === 429) return json({ error: 'Kuota Gemini sedang terbatas. Coba lagi nanti.' }, 429);
     if (!result.ok) return json({ error: 'Gemini gagal memproses audio. Cek API key dan akses model.' }, 502);
     const payload = await result.json();
     const transcript = payload.candidates?.[0]?.content?.parts
       ?.filter((part) => !part.thought && typeof part.text === 'string')
       .map((part) => part.text).join(' ').trim();
-    if (!transcript) return json({ error: 'Gemini tidak mendeteksi ucapan. Coba rekam lagi.' }, 422);
+    if (!transcript) return json({ error: 'Gemini tidak mendeteksi ucapan. Coba bicara lebih jelas atau dekatkan mikrofon.' }, 422);
     return json({ transcript });
   } catch {
     return json({ error: 'Gemini tidak bisa dijangkau. Coba lagi.' }, 502);
@@ -129,17 +163,21 @@ async function chat(request, env) {
 
 export function createRitmeHandler(assets) {
   return async (request, env, pathname) => {
-    if (pathname === '/api/chat') {
+    const url = new URL(request.url);
+    const resolved = pathname || url.pathname;
+    const view = url.searchParams.get('view');
+
+    if (resolved === '/api/chat' || view === 'chat' || url.pathname === '/api/chat') {
       if (request.method !== 'POST') return json({ error: 'Gunakan POST.' }, 405);
       return chat(request, env);
     }
-    if (pathname === '/api/transcribe') {
+    if (resolved === '/api/transcribe' || view === 'transcribe' || url.pathname === '/api/transcribe') {
       if (request.method !== 'POST') return json({ error: 'Gunakan POST.' }, 405);
       return transcribe(request, env);
     }
-    if (!['GET', 'HEAD'].includes(request.method)) return new Response(null, { status: 405 });
-    if (!Object.hasOwn(assets, pathname)) return new Response('Halaman tidak ditemukan.', { status: 404 });
-    const [type, body] = assets[pathname];
+    if (!['GET', 'HEAD'].includes(request.method)) return json({ error: 'Metode tidak diizinkan.' }, 405);
+    if (!Object.hasOwn(assets, resolved)) return new Response('Halaman tidak ditemukan.', { status: 404 });
+    const [type, body] = assets[resolved];
     return new Response(request.method === 'HEAD' ? null : body, {
       headers: { 'Content-Type': type, 'X-Content-Type-Options': 'nosniff', 'Permissions-Policy': 'microphone=(self)' },
     });

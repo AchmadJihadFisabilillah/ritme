@@ -142,6 +142,9 @@ function save(message, focus) {
     storageAvailable = false;
   }
   render();
+  if (dialog.open && dialog.querySelector('#dialog-title')?.textContent === 'Pemberitahuan & Pengingat') {
+    openNotifications();
+  }
   if (focus) document.querySelector(`[data-focus="${CSS.escape(focus)}"]`)?.focus({ preventScroll: true });
   if (message) showToast(storageAvailable ? message : 'Perubahan aktif untuk sesi ini. Penyimpanan browser tidak tersedia.');
 }
@@ -191,6 +194,49 @@ function sortedBills() {
 function dueSoon() {
   const end = shifted(today, 7);
   return sortedBills().filter((item) => !item.paid && item.date <= end);
+}
+
+function notificationCount() {
+  const pendingAgenda = agendaFor(today).filter((item) => !item.done).length;
+  const pendingHabits = state.habits.filter((item) => !item.days.includes(today)).length;
+  const bills = dueSoon().length;
+  return pendingAgenda + pendingHabits + bills;
+}
+
+function openNotifications() {
+  const pendingAgenda = agendaFor(today).filter((item) => !item.done);
+  const pendingHabits = state.habits.filter((item) => !item.days.includes(today));
+  const bills = dueSoon();
+  const total = pendingAgenda.length + pendingHabits.length + bills.length;
+
+  let body = '';
+  if (!total) {
+    body = '<p class="empty" style="text-align:center;padding:24px 0;">🎉 Semua agenda dan kebiasaan hari ini sudah tuntas, dan tidak ada tagihan jatuh tempo dalam 7 hari ke depan.</p>';
+  } else {
+    body = `
+      <div style="display:grid;gap:18px;">
+        ${pendingAgenda.length ? `
+          <div>
+            <h3 style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;">Agenda Hari Ini (${pendingAgenda.length})</h3>
+            <div class="entry-list">${pendingAgenda.map((item) => agendaEntry(item, false)).join('')}</div>
+          </div>
+        ` : ''}
+        ${pendingHabits.length ? `
+          <div>
+            <h3 style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;">Kebiasaan Hari Ini (${pendingHabits.length})</h3>
+            <div class="entry-list">${pendingHabits.map(habitEntry).join('')}</div>
+          </div>
+        ` : ''}
+        ${bills.length ? `
+          <div>
+            <h3 style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;">Pengingat Tagihan (${bills.length})</h3>
+            <div class="entry-list">${bills.map((item) => billEntry(item, false)).join('')}</div>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+  modal('Pemberitahuan & Pengingat', body, cancel());
 }
 
 function streak(item) {
@@ -256,7 +302,7 @@ function shell(route) {
     <div class="topbar-actions">
       ${button('Asisten Gemini', 'open-agent', 'mic', {variant: 'agent-cta', focus: 'open-agent'})}
       <a class="btn" href="#jadwal" data-action="today-link">${icon('calendar')} ${shortDate.format(asDate(today))}</a>
-      <a class="btn icon" href="#tagihan" aria-label="Pengingat tagihan" title="Pengingat tagihan">${icon('bell')}${dueSoon().length ? '<span class="dot"></span>' : ''}</a>
+      <button type="button" class="btn icon" data-action="open-notifications" data-focus="open-notifications" aria-label="Pemberitahuan & Pengingat" title="Pemberitahuan & Pengingat">${icon('bell')}${notificationCount() ? '<span class="dot"></span>' : ''}</button>
     </div>`;
 }
 
@@ -417,12 +463,23 @@ async function toWav(blob) {
   const AudioCtx = window.AudioContext || window.webkitAudioContext;
   const tempCtx = new AudioCtx();
   const buffer = await blob.arrayBuffer();
-  const decoded = await tempCtx.decodeAudioData(buffer);
-  tempCtx.close?.();
+  let decoded;
+  try {
+    decoded = await tempCtx.decodeAudioData(buffer);
+  } catch {
+    decoded = await new Promise((resolve, reject) => {
+      tempCtx.decodeAudioData(buffer.slice(0), resolve, reject);
+    });
+  } finally {
+    tempCtx.close?.();
+  }
 
   const targetSampleRate = 16000;
   const OfflineContext = window.OfflineAudioContext || window.webkitOfflineAudioContext;
-  const targetLength = Math.max(1, Math.round(decoded.duration * targetSampleRate));
+  const trueDuration = Number.isFinite(decoded.duration) && decoded.duration > 0
+    ? decoded.duration
+    : decoded.length / decoded.sampleRate;
+  const targetLength = Math.max(1, Math.round(trueDuration * targetSampleRate));
   const offlineCtx = new OfflineContext(1, targetLength, targetSampleRate);
 
   const source = offlineCtx.createBufferSource();
@@ -432,6 +489,15 @@ async function toWav(blob) {
 
   const rendered = await offlineCtx.startRendering();
   const samples = rendered.getChannelData(0);
+
+  // Periksa amplitudo dan normalisasi audio jika terlalu pelan
+  let maxAmp = 0;
+  for (let i = 0; i < samples.length; i++) {
+    const abs = Math.abs(samples[i]);
+    if (abs > maxAmp) maxAmp = abs;
+  }
+  const gain = (maxAmp > 0.002 && maxAmp < 0.5) ? Math.min(4, 0.7 / maxAmp) : 1;
+
   const bytes = new DataView(new ArrayBuffer(44 + samples.length * 2));
   const ascii = (offset, text) => [...text].forEach((letter, index) => bytes.setUint8(offset + index, letter.charCodeAt(0)));
   ascii(0, 'RIFF');
@@ -446,12 +512,74 @@ async function toWav(blob) {
   bytes.setUint16(34, 16, true);
   ascii(36, 'data');
   bytes.setUint32(40, samples.length * 2, true);
-  samples.forEach((sample, index) => bytes.setInt16(44 + index * 2, Math.max(-1, Math.min(1, sample)) * 32767, true));
-  return bytes.buffer;
+  for (let i = 0; i < samples.length; i++) {
+    const val = Math.max(-1, Math.min(1, samples[i] * gain));
+    bytes.setInt16(44 + i * 2, val * 32767, true);
+  }
+  return { buffer: bytes.buffer, isSilent: maxAmp < 0.002 };
 }
 
+function localAssistantReply(text) {
+  const lower = text.toLowerCase();
+  let date = today;
+  if (lower.includes('besok')) {
+    date = shifted(today, 1);
+  } else if (lower.includes('lusa')) {
+    date = shifted(today, 2);
+  } else {
+    const days = ['minggu', 'senin', 'selasa', 'rabu', 'kamis', 'jumat', 'sabtu'];
+    for (let i = 0; i < days.length; i++) {
+      if (lower.includes(days[i])) {
+        const currentDayIndex = asDate(today).getUTCDay();
+        let diff = i - currentDayIndex;
+        if (diff <= 0) diff += 7;
+        date = shifted(today, diff);
+        break;
+      }
+    }
+  }
+
+  let time = '';
+  const timeMatch = lower.match(/(?:jam|pukul)\s*(\d{1,2})(?::(\d{2}))?\s*(pagi|siang|sore|malam)?/);
+  if (timeMatch) {
+    let hour = parseInt(timeMatch[1], 10);
+    const minute = timeMatch[2] || '00';
+    const period = timeMatch[3];
+    if ((period === 'siang' || period === 'sore' || period === 'malam') && hour < 12) hour += 12;
+    time = `${String(hour).padStart(2, '0')}:${minute}`;
+  }
+
+  const isAgenda = /(?:jadwal|besok|lusa|jam|pukul|minggu|senin|selasa|rabu|kamis|jumat|sabtu|hari|review|meeting|kuliah|tugas|rapat|jalan|makan)/.test(lower);
+  if (isAgenda) {
+    let title = text
+      .replace(/(?:tolong|coba|bantu|jadwalkan|buatkan jadwal|jadwal|besok|lusa|hari ini|pukul\s*\d{1,2}(?::\d{2})?|jam\s*\d{1,2}(?::\d{2})?|siang|pagi|sore|malam|wib)/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!title || title.length < 3) title = text.slice(0, 50);
+    title = title.charAt(0).toUpperCase() + title.slice(1);
+    return {
+      reply: `Saya buatkan draf jadwal untuk "${title}" pada ${fullDate.format(asDate(date))}${time ? ` pukul ${time} WIB` : ''}. Silakan tekan tombol Simpan di bawah jika sudah sesuai.`,
+      draft: { kind: 'agenda', title, date, time }
+    };
+  } else {
+    return {
+      reply: `Saya catat ini: "${text}". Silakan tekan Simpan untuk menyimpannya ke catatan pribadi Anda.`,
+      draft: { kind: 'note', title: 'Catatan', note: text }
+    };
+  }
+}
+
+let activeSpeechRec;
 let activeRecording;
+
 async function dictateTitle(trigger) {
+  if (activeSpeechRec) {
+    activeSpeechRec.stop();
+    activeSpeechRec = undefined;
+    trigger.lastChild.textContent = 'Rekam suara';
+    trigger.disabled = false;
+    return;
+  }
   if (activeRecording?.state === 'recording') {
     activeRecording.stop();
     return;
@@ -460,8 +588,77 @@ async function dictateTitle(trigger) {
   const form = trigger.form;
   const status = form.querySelector('.voice-status');
   const input = form.elements.title;
-  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-    status.textContent = 'Perekaman tidak tersedia. Gunakan mikrofon di keyboard HP.';
+
+  // 1. Coba Web Speech API bawaan browser (berjalan instan di Chrome, Edge, Safari di port 5500 maupun Vercel)
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (SpeechRec) {
+    try {
+      const recognition = new SpeechRec();
+      recognition.lang = 'id-ID';
+      recognition.continuous = false;
+      recognition.interimResults = true;
+
+      activeSpeechRec = recognition;
+      trigger.lastChild.textContent = 'Stop dan kirim';
+      trigger.disabled = false;
+      status.textContent = 'Mendengarkan… Silakan bicara dalam bahasa Indonesia.';
+
+      let finalTranscript = '';
+      recognition.onresult = (event) => {
+        let interim = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const trans = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            finalTranscript += trans + ' ';
+          } else {
+            interim += trans;
+          }
+        }
+        const text = (finalTranscript + interim).trim();
+        if (text) {
+          input.value = text.slice(0, input.maxLength);
+          input.setCustomValidity('');
+        }
+      };
+
+      recognition.onerror = (event) => {
+        activeSpeechRec = undefined;
+        trigger.lastChild.textContent = 'Rekam suara';
+        trigger.disabled = false;
+        if (event.error === 'not-allowed') {
+          status.textContent = 'Izin mikrofon ditolak. Izinkan mikrofon di browser.';
+        } else if (event.error === 'no-speech') {
+          status.textContent = 'Tidak ada suara terdeteksi. Silakan coba lagi.';
+        } else {
+          fallbackMediaRecorder(trigger, form, status, input);
+        }
+      };
+
+      recognition.onend = () => {
+        activeSpeechRec = undefined;
+        trigger.lastChild.textContent = 'Rekam suara';
+        trigger.disabled = false;
+        if (input.value.trim()) {
+          status.textContent = 'Dikte suara berhasil dimasukkan!';
+        } else {
+          status.textContent = 'Dikte selesai.';
+        }
+      };
+
+      recognition.start();
+      return;
+    } catch {
+      // Jika SpeechRecognition gagal start, lanjut ke MediaRecorder
+    }
+  }
+
+  // 2. Fallback MediaRecorder + /api/transcribe
+  fallbackMediaRecorder(trigger, form, status, input);
+}
+
+async function fallbackMediaRecorder(trigger, form, status, input) {
+  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+    status.textContent = 'Perekaman mikrofon tidak didukung browser ini. Gunakan Google Chrome atau Safari.';
     return;
   }
 
@@ -484,7 +681,9 @@ async function dictateTitle(trigger) {
   status.textContent = 'Meminta akses mikrofon…';
 
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
     if (abort.signal.aborted || !form.isConnected || !dialog.open) {
       finish();
       return;
@@ -506,18 +705,28 @@ async function dictateTitle(trigger) {
       if (abort.signal.aborted) return;
       trigger.disabled = true;
       trigger.lastChild.textContent = 'Rekam suara';
-      status.textContent = 'Gemini sedang mengubah suara menjadi teks…';
+      status.textContent = 'Memproses suara…';
       try {
-        const audio = await toWav(new Blob(chunks, { type: recorder.mimeType }));
+        if (!chunks.length) throw new Error('Tidak ada data audio yang terekam.');
+        const { buffer: audio, isSilent } = await toWav(new Blob(chunks, { type: recorder.mimeType }));
+        if (isSilent) {
+          status.textContent = 'Suara tidak tertangkap. Bicara lebih dekat ke mikrofon.';
+          return;
+        }
         const response = await fetch('/api/transcribe', {
           method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: audio, signal: abort.signal,
         });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || 'Transkripsi gagal.');
-        if (abort.signal.aborted || !form.isConnected) return;
-        input.value = data.transcript.slice(0, input.maxLength);
-        input.setCustomValidity('');
-        status.textContent = 'Cek hasil dikte sebelum menyimpan.';
+        if (response.ok) {
+          const data = await response.json();
+          input.value = data.transcript.slice(0, input.maxLength);
+          input.setCustomValidity('');
+          status.textContent = 'Cek hasil dikte sebelum menyimpan.';
+        } else if (response.status === 405 || response.status === 404) {
+          status.textContent = 'Dikte selesai diuji di lokal.';
+        } else {
+          const data = await response.json().catch(() => ({}));
+          throw new Error(data.error || `Transkripsi gagal (${response.status}).`);
+        }
       } catch (error) {
         if (!abort.signal.aborted) status.textContent = error.message || 'Transkripsi gagal. Coba lagi.';
       } finally {
@@ -525,17 +734,21 @@ async function dictateTitle(trigger) {
         dialog.removeEventListener('close', cancel);
       }
     };
-    recorder.start();
+    recorder.start(250);
     trigger.lastChild.textContent = 'Stop dan kirim';
     trigger.disabled = false;
-    status.textContent = 'Sedang merekam. Ketuk Stop dan kirim setelah selesai.';
+    status.textContent = 'Sedang merekam. Bicara sekarang, lalu ketuk Stop dan kirim.';
     timeout = setTimeout(() => {
       if (recorder.state === 'recording') recorder.stop();
     }, 12000);
-  } catch {
+  } catch (err) {
     finish();
     trigger.disabled = false;
-    status.textContent = 'Mikrofon belum bisa digunakan. Cek izin browser atau pakai dikte keyboard.';
+    if (err?.name === 'NotAllowedError') {
+      status.textContent = 'Akses mikrofon ditolak. Izinkan izin mikrofon di browser.';
+    } else {
+      status.textContent = err?.message || 'Mikrofon belum bisa digunakan.';
+    }
     dialog.removeEventListener('close', cancel);
   }
 }
@@ -578,9 +791,22 @@ async function sendAgentMessage(form) {
   status.textContent = 'Gemini sedang menjawab…';
   const messages = [...agentMessages.slice(-8).map(({ role, text }) => ({ role, text })), { role: 'user', text }];
   try {
-    const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages }) });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'Gemini belum bisa menjawab.');
+    let data;
+    try {
+      const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages }) });
+      if (response.ok) {
+        data = await response.json();
+      } else if (response.status === 405 || response.status === 404) {
+        // Fallback cerdas saat diuji di Live Server / server statis lokal
+        data = localAssistantReply(text);
+      } else {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || `Server merespons status ${response.status}`);
+      }
+    } catch {
+      // Jika jaringan gagal / offline / server lokal tanpa backend
+      data = localAssistantReply(text);
+    }
     agentMessages.push({ role: 'user', text }, { role: 'model', text: data.reply, draft: data.draft });
     agentPending = false;
     if (form.isConnected && dialog.open) openAgent();
@@ -720,6 +946,7 @@ document.addEventListener('click', (event) => {
   if (!target) return;
   const { action, id, date, focus } = target.dataset;
   switch (action) {
+    case 'open-notifications': openNotifications(); break;
     case 'open-agent': openAgent(); break;
     case 'save-agent-draft': saveAgentDraft(id); break;
     case 'dictate-title': dictateTitle(target); break;
