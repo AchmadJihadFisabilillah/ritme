@@ -1,0 +1,19 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "outputDirectory": "public",
+  "functions": {
+    "api/ritme.js": {
+      "includeFiles": "web/**",
+      "maxDuration": 45
+    }
+  },
+  "rewrites": [
+    { "source": "/", "destination": "/api/ritme?view=home" },
+    { "source": "/index.html", "destination": "/api/ritme?view=home" },
+    { "source": "/app.js", "destination": "/api/ritme?view=script" },
+    { "source": "/style.css", "destination": "/api/ritme?view=style" },
+    { "source": "/api/chat", "destination": "/api/ritme?view=chat" },
+    { "source": "/api/transcribe", "destination": "/api/ritme?view=transcribe" }
+  ]
+}
