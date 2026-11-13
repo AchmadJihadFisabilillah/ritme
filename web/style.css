@@ -301,8 +301,12 @@ input, select { min-height: 39px; width: 100%; min-width: 0; border-radius: 8px;
 .voice-status { color: var(--muted); font-size: 12px; }
 .agent-log { display: grid; gap: 9px; max-height: min(38vh, 340px); overflow: auto; }
 .agent-log:empty { display: none; }
-.agent-message, .agent-draft { padding: 10px; background: var(--surface-raised); border-radius: 8px; overflow-wrap: anywhere; }
-.agent-message p { white-space: pre-wrap; }
+.agent-message, .agent-draft { padding: 10px 12px; background: var(--surface-raised); border-radius: 8px; overflow-wrap: anywhere; }
+.agent-message.is-user { background: #1c2b42; border-left: 3px solid #3b82f6; margin-left: 20px; }
+.agent-message.is-user strong { color: #60a5fa; }
+.agent-message.is-model { background: #16202e; border-left: 3px solid #10b981; margin-right: 20px; }
+.agent-message.is-model strong { color: #34d399; }
+.agent-message p { white-space: pre-wrap; margin: 4px 0 0; }
 .agent-draft { margin-top: 8px; background: var(--paper); }
 .agent-draft button { margin-top: 6px; }
 textarea { width: 100%; border: 1px solid var(--line); background: var(--paper); color: var(--ink); border-radius: 8px; padding: 9px; font: inherit; resize: vertical; }

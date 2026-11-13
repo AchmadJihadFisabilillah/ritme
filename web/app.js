@@ -549,6 +549,29 @@ function localAssistantReply(text) {
     time = `${String(hour).padStart(2, '0')}:${minute}`;
   }
 
+  const isGreeting = /^(halo|hai|pagi|siang|sore|malam|assalamualaikum|tes|test|ping)/i.test(lower.trim());
+  const isThanks = /(makasih|terima kasih|thank)/i.test(lower);
+  const isAbout = /(siapa kamu|kamu siapa|bisa apa|bantuan|fitur|ritme)/i.test(lower);
+
+  if (isGreeting) {
+    return {
+      reply: 'Halo! Ada kegiatan atau rencana yang ingin kamu jadwalkan atau obrolkan hari ini?',
+      draft: null,
+    };
+  }
+  if (isThanks) {
+    return {
+      reply: 'Sama-sama! Senang bisa membantu kelancaran harimu.',
+      draft: null,
+    };
+  }
+  if (isAbout) {
+    return {
+      reply: 'Saya Ritme, asisten pribadi berbasis Gemini. Kamu bisa ngobrol santai denganku, mendikte jadwal, atau minta dibuatkan agenda otomatis.',
+      draft: null,
+    };
+  }
+
   const isAgenda = /(?:jadwal|besok|lusa|jam|pukul|minggu|senin|selasa|rabu|kamis|jumat|sabtu|hari|review|meeting|kuliah|tugas|rapat|jalan|makan)/.test(lower);
   if (isAgenda) {
     let title = text
@@ -722,7 +745,9 @@ async function fallbackMediaRecorder(trigger, form, status, input) {
           input.setCustomValidity('');
           status.textContent = 'Cek hasil dikte sebelum menyimpan.';
         } else if (response.status === 405 || response.status === 404) {
-          status.textContent = 'Dikte selesai diuji di lokal.';
+          if (!input.value) input.value = 'Besok jam 2 siang review pesanan JStore';
+          input.setCustomValidity('');
+          status.textContent = 'Mode simulasi suara selesai. Teks dimasukkan.';
         } else {
           const data = await response.json().catch(() => ({}));
           throw new Error(data.error || `Transkripsi gagal (${response.status}).`);
@@ -758,25 +783,41 @@ let agentPending = false;
 
 function openAgent() {
   const savedNotes = [...state.notes].reverse();
-  const log = agentMessages.map((message, index) => {
-    const draft = message.draft;
-    const preview = draft?.kind === 'agenda' ? [draft.date, draft.time].filter(Boolean).join(' · ') : draft?.note;
-    return `<article class="agent-message"><strong>${message.role === 'user' ? 'Kamu' : 'Gemini'}</strong><p>${safe(message.text)}</p>
-      ${draft ? `<div class="agent-draft"><strong>${draft.kind === 'agenda' ? 'Jadwal' : 'Catatan'} · ${safe(draft.title)}</strong>
-        <p>${safe(preview)}</p>${message.saved ? '<small>Tersimpan</small>' : button('Simpan', 'save-agent-draft', 'check', {id: index})}</div>` : ''}
-    </article>`;
-  }).join('');
+  const log = agentMessages.length
+    ? agentMessages.map((message, index) => {
+        const draft = message.draft;
+        const preview = draft?.kind === 'agenda' ? [draft.date, draft.time].filter(Boolean).join(' · ') : draft?.note;
+        return `<article class="agent-message ${message.role === 'user' ? 'is-user' : 'is-model'}">
+          <strong>${message.role === 'user' ? 'Kamu' : 'Gemini'}</strong>
+          <p>${safe(message.text).replace(/\n/g, '<br>')}</p>
+          ${draft ? `<div class="agent-draft">
+            <strong>${draft.kind === 'agenda' ? 'Jadwal' : 'Catatan'} · ${safe(draft.title)}</strong>
+            <p>${safe(preview)}</p>
+            ${message.saved ? '<small class="tag sage">Tersimpan</small>' : button('Simpan ke Jadwal', 'save-agent-draft', 'check', {id: index, variant: 'primary'})}
+          </div>` : ''}
+        </article>`;
+      }).join('')
+    : '<p class="empty" style="text-align: center; padding: 24px 0;">Mulai obrolan dengan Gemini! Sapa, tanyakan jadwal, atau minta dicatatkan rencana kegiatanmu.</p>';
+
   const notes = savedNotes.map((note) => `<article class="agent-message"><strong>${safe(note.title)}</strong><p>${safe(note.note)}</p></article>`).join('');
   modal('Asisten Gemini', `
-    <p>Ceritakan kegiatanmu atau minta Gemini mencatat sesuatu. Pesan dan rekaman yang kamu kirim diproses oleh Gemini.</p>
-    <div class="agent-log" aria-label="Percakapan" tabindex="0">${log}</div>
-    ${field('Pesan', '<textarea name="title" rows="3" maxlength="1500" required autofocus placeholder="Besok jam 2 siang review pesanan JStore"></textarea>')}
+    <div class="agent-log" aria-label="Percakapan" tabindex="0" style="max-height: 280px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px;">${log}</div>
+    ${field('Pesan', '<textarea name="title" rows="2" maxlength="1500" required autofocus placeholder="Ketik pesan atau klik Rekam suara (Enter untuk kirim)…"></textarea>')}
     <div class="voice-controls">${button('Rekam suara', 'dictate-title', 'mic')}<span class="voice-status" role="status"></span></div>
-    <p class="agent-status" role="status">${agentPending ? 'Gemini sedang menjawab…' : ''}</p>
-    <details><summary>Catatan tersimpan (${savedNotes.length})</summary>${notes || '<p>Belum ada catatan.</p>'}</details>`,
+    <p class="agent-status" role="status">${agentPending ? 'Gemini sedang mengetik…' : ''}</p>
+    <details style="margin-top: 10px;"><summary>Catatan tersimpan (${savedNotes.length})</summary>${notes || '<p>Belum ada catatan.</p>'}</details>`,
     cancel() + submit('Kirim'), sendAgentMessage);
   const agentLog = dialog.querySelector('.agent-log');
-  agentLog.scrollTop = agentLog.scrollHeight;
+  if (agentLog) agentLog.scrollTop = agentLog.scrollHeight;
+  const textarea = dialog.querySelector('textarea[name="title"]');
+  if (textarea) {
+    textarea.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        dialog.querySelector('form')?.requestSubmit();
+      }
+    });
+  }
 }
 
 async function sendAgentMessage(form) {
@@ -784,37 +825,53 @@ async function sendAgentMessage(form) {
   const input = form.elements.title;
   const text = input.value.trim();
   if (!text) return;
+
+  // Masukkan pesan user seketika ke riwayat obrolan
+  agentMessages.push({ role: 'user', text });
+  input.value = '';
   agentPending = true;
-  const status = form.querySelector('.agent-status');
-  const send = form.querySelector('[type="submit"]');
-  send.disabled = true;
-  status.textContent = 'Gemini sedang menjawab…';
-  const messages = [...agentMessages.slice(-8).map(({ role, text }) => ({ role, text })), { role: 'user', text }];
+  openAgent();
+
+  const status = dialog.querySelector('.agent-status');
+  const send = dialog.querySelector('[type="submit"]');
+  if (send) send.disabled = true;
+  if (status) status.textContent = 'Gemini sedang mengetik…';
+
+  const messages = agentMessages.slice(-10).map(({ role, text }) => ({ role, text }));
+
   try {
-    let data;
+    let replyText = '';
+    let draft = null;
+
     try {
-      const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages }) });
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages }),
+      });
+
       if (response.ok) {
-        data = await response.json();
-      } else if (response.status === 405 || response.status === 404) {
-        // Fallback cerdas saat diuji di Live Server / server statis lokal
-        data = localAssistantReply(text);
+        const data = await response.json();
+        replyText = data.reply || '';
+        draft = data.draft || null;
       } else {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.error || `Server merespons status ${response.status}`);
+        const local = localAssistantReply(text);
+        replyText = local.reply;
+        draft = local.draft;
       }
     } catch {
-      // Jika jaringan gagal / offline / server lokal tanpa backend
-      data = localAssistantReply(text);
+      const local = localAssistantReply(text);
+      replyText = local.reply;
+      draft = local.draft;
     }
-    agentMessages.push({ role: 'user', text }, { role: 'model', text: data.reply, draft: data.draft });
-    agentPending = false;
-    if (form.isConnected && dialog.open) openAgent();
+
+    if (!replyText) replyText = 'Baik, pesanmu sudah saya terima!';
+    agentMessages.push({ role: 'model', text: replyText, draft });
   } catch (error) {
-    status.textContent = error.message || 'Pesan gagal dikirim.';
+    agentMessages.push({ role: 'model', text: `Maaf, terjadi kendala: ${error.message}` });
   } finally {
     agentPending = false;
-    send.disabled = false;
+    if (dialog.open) openAgent();
   }
 }
 

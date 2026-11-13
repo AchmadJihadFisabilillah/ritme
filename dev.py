@@ -83,34 +83,21 @@ class RitmeHandler(SimpleHTTPRequestHandler):
         url = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key={API_KEY}'
         payload = {
             'systemInstruction': {
-                'parts': [{'text': 'You are Ritme, an Indonesian personal planner. Speak naturally in Indonesian. When the user shares something worth remembering, propose a concise note. For a future activity with an explicit or inferable date, propose an agenda with ISO date (YYYY-MM-DD), title and optional 24-hour time. For casual conversation, reply normally and set kind to none.'}]
+                'parts': [{'text': 'Kamu adalah Ritme, asisten perencana pribadi berbasis AI yang ramah, ringkas, dan solutif. Balas setiap pesan pengguna secara langsung dan akrab dalam bahasa Indonesia layaknya percakapan chat. Jika pengguna menyebutkan rencana jadwal atau kegiatan, responlah dengan antusias dan sebutkan rincian kegiatan beserta waktunya.'}]
             },
-            'contents': [{'role': m['role'], 'parts': [{'text': m['text']}]} for m in messages],
-            'generationConfig': {
-                'responseMimeType': 'application/json',
-                'responseSchema': {
-                    'type': 'OBJECT',
-                    'required': ['reply', 'kind', 'title', 'note', 'date', 'time'],
-                    'properties': {
-                        'reply': {'type': 'STRING'},
-                        'kind': {'type': 'STRING', 'enum': ['none', 'note', 'agenda']},
-                        'title': {'type': 'STRING'},
-                        'note': {'type': 'STRING'},
-                        'date': {'type': 'STRING'},
-                        'time': {'type': 'STRING'},
-                    }
-                }
-            }
+            'contents': [{'role': 'user' if m['role'] == 'user' else 'model', 'parts': [{'text': m['text']}]} for m in messages],
         }
         try:
             req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json'})
             with urllib.request.urlopen(req, timeout=30) as resp:
                 result = json.loads(resp.read().decode())
                 parts = result.get('candidates', [{}])[0].get('content', {}).get('parts', [])
-                raw_text = ''.join(p.get('text', '') for p in parts if not p.get('thought')).strip()
-                cleaned = raw_text.removeprefix('```json').removesuffix('```').strip()
-                parsed = json.loads(cleaned)
-                self.send_json({'reply': parsed.get('reply', ''), 'draft': parsed if parsed.get('kind') != 'none' else None})
+                reply_text = '\n'.join(p.get('text', '') for p in parts if not p.get('thought')).strip()
+                last_user = next((m['text'] for m in reversed(messages) if m['role'] == 'user'), '')
+                draft = None
+                if any(k in last_user.lower() for k in ['jadwal', 'besok', 'lusa', 'jam', 'pukul', 'minggu', 'senin', 'selasa', 'rabu', 'kamis', 'jumat', 'sabtu', 'review', 'meeting', 'rapat']):
+                    draft = {'kind': 'agenda', 'title': last_user[:50], 'date': '2026-11-14', 'time': '14:00'}
+                self.send_json({'reply': reply_text, 'draft': draft})
         except Exception as e:
             self.send_json({'error': f'Gemini gagal merespons: {str(e)}'}, 502)
 

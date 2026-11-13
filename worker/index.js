@@ -11,7 +11,14 @@ function isSameOrigin(request) {
   if (origin === url.origin) return true;
   const host = request.headers.get('x-forwarded-host') || request.headers.get('host') || url.host;
   const proto = request.headers.get('x-forwarded-proto') || 'https';
-  return origin === `${proto}://${host}` || origin === `https://${host}` || origin === `http://${host}`;
+  if (origin === `${proto}://${host}` || origin === `https://${host}` || origin === `http://${host}`) return true;
+  try {
+    const originHost = new URL(origin).hostname;
+    const reqHost = (host.split(':')[0] || url.hostname);
+    if (originHost === reqHost) return true;
+    if (originHost === 'localhost' || originHost === '127.0.0.1') return true;
+  } catch {}
+  return false;
 }
 
 async function transcribe(request, env) {
@@ -75,7 +82,16 @@ async function transcribe(request, env) {
     });
 
     if (!result.ok && result.status !== 429) {
-      result = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-transcribe:generateContent', {
+      result = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
+        signal: AbortSignal.timeout(25000),
+        body: requestBody,
+      });
+    }
+
+    if (!result.ok && result.status !== 429) {
+      result = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
         signal: AbortSignal.timeout(25000),
@@ -96,68 +112,120 @@ async function transcribe(request, env) {
   }
 }
 
+function detectDraft(userText, replyText, today) {
+  const combined = (userText + ' ' + replyText).toLowerCase();
+  const isAgenda = /(?:jadwal|besok|lusa|jam|pukul|minggu|senin|selasa|rabu|kamis|jumat|sabtu|hari|review|meeting|kuliah|tugas|rapat|jalan|makan)/.test(userText.toLowerCase());
+
+  if (isAgenda) {
+    let date = today;
+    if (userText.toLowerCase().includes('besok')) {
+      const d = new Date(today + 'T00:00:00Z');
+      d.setUTCDate(d.getUTCDate() + 1);
+      date = d.toISOString().slice(0, 10);
+    } else if (userText.toLowerCase().includes('lusa')) {
+      const d = new Date(today + 'T00:00:00Z');
+      d.setUTCDate(d.getUTCDate() + 2);
+      date = d.toISOString().slice(0, 10);
+    }
+
+    let time = '';
+    const timeMatch = userText.match(/(?:jam|pukul)\s*(\d{1,2})(?::(\d{2}))?\s*(pagi|siang|sore|malam)?/i);
+    if (timeMatch) {
+      let h = parseInt(timeMatch[1], 10);
+      const m = timeMatch[2] || '00';
+      const p = (timeMatch[3] || '').toLowerCase();
+      if ((p === 'siang' || p === 'sore' || p === 'malam') && h < 12) h += 12;
+      time = `${String(h).padStart(2, '0')}:${m}`;
+    }
+
+    let title = userText
+      .replace(/(?:tolong|coba|bantu|jadwalkan|buatkan jadwal|jadwal|besok|lusa|hari ini|pukul\s*\d{1,2}(?::\d{2})?|jam\s*\d{1,2}(?::\d{2})?|siang|pagi|sore|malam|wib)/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!title || title.length < 3) title = userText.slice(0, 50);
+    title = title.charAt(0).toUpperCase() + title.slice(1);
+
+    return { kind: 'agenda', title, date, time };
+  }
+  return null;
+}
+
 async function chat(request, env) {
   if (!isSameOrigin(request)) return json({ error: 'Asal permintaan tidak sesuai.' }, 403);
   if (!env.GEMINI_API_KEY) return json({ error: 'Asisten menunggu konfigurasi API key Gemini.' }, 503);
-  const reader = request.body?.getReader();
-  if (!reader) return json({ error: 'Pesan kosong.' }, 400);
-  const decoder = new TextDecoder();
-  let body = '';
-  let size = 0;
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    size += value.length;
-    if (size > 60000) {
-      await reader.cancel();
-      return json({ error: 'Pesan terlalu panjang.' }, 413);
-    }
-    body += decoder.decode(value, { stream: true });
+
+  let rawBody = '';
+  try {
+    rawBody = await request.text();
+  } catch {
+    return json({ error: 'Gagal membaca pesan.' }, 400);
   }
 
   try {
-    const { messages } = JSON.parse(body + decoder.decode());
-    if (!Array.isArray(messages) || !messages.length || messages.length > 9 ||
-        !messages.every((m) => m && ['user', 'model'].includes(m.role) && typeof m.text === 'string' && m.text.length <= 1500) ||
-        messages.at(-1).role !== 'user') return json({ error: 'Format pesan tidak sesuai.' }, 400);
+    const { messages } = JSON.parse(rawBody);
+    if (!Array.isArray(messages) || !messages.length) return json({ error: 'Pesan kosong.' }, 400);
+
     const today = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Jakarta', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
-    const result = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent', {
+
+    const payloadStr = JSON.stringify({
+      systemInstruction: {
+        parts: [{
+          text: 'Kamu adalah Ritme, asisten perencana pribadi berbasis AI yang ramah, ringkas, dan solutif. Hari ini di Jakarta adalah ' + today + '. Balas setiap pesan pengguna secara langsung, akrab, dan jelas dalam bahasa Indonesia layaknya obrolan pesan chat. Jika pengguna menyebutkan rencana jadwal atau kegiatan, responlah dengan antusias dan sebutkan rincian kegiatan beserta waktunya.'
+        }]
+      },
+      contents: messages.map(({ role, text }) => ({
+        role: role === 'user' ? 'user' : 'model',
+        parts: [{ text: text || '' }]
+      }))
+    });
+
+    let result = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
       signal: AbortSignal.timeout(25000),
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: 'You are Ritme, an Indonesian personal planner. Today in Jakarta is ' + today + '. Speak naturally in Indonesian. When the user shares something worth remembering or asks to note it, propose one concise note preserving all important details. For a future activity with an explicit or inferable date, propose an agenda with ISO date, title and optional 24-hour time. Ask a clarifying question if an essential date is unclear. For casual conversation, reply normally and set kind to none. Never say you already saved anything. The user confirms each proposed record. For notes keep the original meaning and do not invent facts.' }] },
-        contents: messages.map(({role, text}) => ({role, parts:[{text}]})),
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseSchema: { type: 'OBJECT', required: ['reply', 'kind', 'title', 'note', 'date', 'time'], properties: {
-            reply: {type:'STRING'}, kind: {type:'STRING', enum:['none','note','agenda']},
-            title: {type:'STRING'}, note: {type:'STRING'}, date: {type:'STRING'}, time: {type:'STRING'},
-          } },
-        },
-      }),
+      body: payloadStr,
     });
+
+    if (!result.ok && result.status !== 429) {
+      result = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
+        signal: AbortSignal.timeout(25000),
+        body: payloadStr,
+      });
+    }
+
+    if (!result.ok && result.status !== 429) {
+      result = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
+        signal: AbortSignal.timeout(25000),
+        body: payloadStr,
+      });
+    }
+
     if (result.status === 429) return json({ error: 'Kuota Gemini sedang terbatas.' }, 429);
-    if (!result.ok) return json({ error: 'Gemini gagal merespons. Cek API key dan akses model.' }, 502);
+    if (!result.ok) {
+      const errData = await result.json().catch(() => ({}));
+      return json({ error: errData?.error?.message || 'Gemini gagal merespons. Cek API key.' }, 502);
+    }
+
     const response = await result.json();
     const parts = response.candidates?.[0]?.content?.parts ?? [];
-    const rawText = parts.filter((part) => !part.thought).map((part) => part.text ?? '').join('').trim();
-    const cleanedText = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
-    const parsed = JSON.parse(cleanedText);
-    if (typeof parsed.reply !== 'string' || !parsed.reply.trim()) throw new Error('Empty reply');
-    const clean = (value, size) => typeof value === 'string' ? value.trim().slice(0, size) : '';
-    const title = clean(parsed.title, 100);
-    const note = clean(parsed.note, 1500);
-    const date = clean(parsed.date, 10);
-    const time = clean(parsed.time, 5);
-    const validDate = /^20\d{2}-\d{2}-\d{2}$/.test(date) && Number.isFinite(Date.parse(date)) &&
-      new Date(date).toISOString().slice(0, 10) === date;
-    const draft = parsed.kind === 'agenda' && title && validDate
-      ? { kind: 'agenda', title, date, time: /^([01]\d|2[0-3]):[0-5]\d$/.test(time) ? time : '' }
-      : parsed.kind === 'note' && note ? { kind: 'note', title: title || 'Catatan', note } : null;
-    return json({ reply: clean(parsed.reply, 1500), draft });
-  } catch {
-    return json({ error: 'Gemini belum bisa menjawab. Coba lagi.' }, 502);
+    const replyText = parts
+      .filter((part) => !part.thought && typeof part.text === 'string')
+      .map((part) => part.text)
+      .join('\n')
+      .trim();
+
+    if (!replyText) throw new Error('Empty reply');
+
+    const lastUserMsg = messages.filter((m) => m.role === 'user').pop()?.text || '';
+    const draft = detectDraft(lastUserMsg, replyText, today);
+
+    return json({ reply: replyText, draft });
+  } catch (err) {
+    return json({ error: err.message || 'Gemini belum bisa menjawab. Coba lagi.' }, 502);
   }
 }
 

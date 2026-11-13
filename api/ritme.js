@@ -47,3 +47,33 @@ export default {
     }
   },
 };
+
+export async function GET(request) {
+  try {
+    const url = new URL(request.url);
+    const pathname = url.pathname === '/api/ritme'
+      ? viewPaths.get(url.searchParams.get('view')) ?? '/api/ritme'
+      : url.pathname;
+    return await handleRitme(request, process.env, pathname);
+  } catch {
+    return Response.json({ error: 'Terjadi kesalahan internal pada server.' }, {
+      status: 500,
+      headers: { 'Cache-Control': 'no-store' },
+    });
+  }
+}
+
+export async function POST(request) {
+  try {
+    const url = new URL(request.url);
+    const pathname = url.pathname === '/api/ritme'
+      ? viewPaths.get(url.searchParams.get('view')) ?? '/api/ritme'
+      : url.pathname;
+    return await handleRitme(request, process.env, pathname);
+  } catch {
+    return Response.json({ error: 'Terjadi kesalahan internal pada server.' }, {
+      status: 500,
+      headers: { 'Cache-Control': 'no-store' },
+    });
+  }
+}

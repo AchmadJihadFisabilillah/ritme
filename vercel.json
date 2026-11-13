@@ -3,7 +3,7 @@
   "framework": null,
   "outputDirectory": "public",
   "functions": {
-    "api/ritme.js": {
+    "api/*.js": {
       "includeFiles": "web/**",
       "maxDuration": 45
     }
